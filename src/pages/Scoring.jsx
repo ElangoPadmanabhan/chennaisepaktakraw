@@ -69,6 +69,9 @@ export default function Scoring() {
   const [homeStarting, setHomeStarting] = useState([]) // playerIds selected as starting
   const [awayStarting, setAwayStarting] = useState([])
   const [showLineupPicker, setShowLineupPicker] = useState(true)
+  // coin toss flow
+  const [tossPhase, setTossPhase] = useState('pretoss') // 'pretoss'|'toss_call'|'toss_result'|'toss_pick'|'manual_pick'|'done'
+  const [tossData, setTossData]   = useState({ callerSide: null, callerChoice: null, coinResult: null, winnerSide: null, winnerChoice: null, servingFirst: null })
   // sub/re-entry modal
   const [subModal, setSubModal] = useState(null) // { side, type: 'sub'|'reentry' }
 
@@ -247,6 +250,16 @@ export default function Scoring() {
       home: buildLineup(homePlayers, homeStarting),
       away: buildLineup(awayPlayers, awayStarting),
     }
+    if (tossData.servingFirst) {
+      updates.servingTeam = tossData.servingFirst
+      updates.toss = {
+        method:       tossData.coinResult ? 'coin' : 'manual',
+        winnerSide:   tossData.winnerSide || tossData.servingFirst,
+        winnerChoice: tossData.winnerChoice || 'serve',
+        servingFirst: tossData.servingFirst,
+        ...(tossData.coinResult ? { callerSide: tossData.callerSide, callerChoice: tossData.callerChoice, coinResult: tossData.coinResult } : {}),
+      }
+    }
     await save(updates)
 
     // Auto-activate league when first match goes live
@@ -423,8 +436,145 @@ export default function Scoring() {
         </div>
       )}
 
+      {/* ── Coin Toss Flow ── */}
+      {isAdmin && fixture.status === 'scheduled' && tossPhase !== 'done' && (() => {
+        const homeName = fixture.homeTeam?.name || 'Home'
+        const awayName = fixture.awayTeam?.name || 'Away'
+        const nameOf = side => side === 'home' ? homeName : awayName
+
+        // Step: pretoss — choose method
+        if (tossPhase === 'pretoss') return (
+          <div className="card" style={{ marginBottom: 14 }}>
+            <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>Coin Toss</p>
+            <button onClick={() => setTossPhase('toss_call')}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '13px 14px', borderRadius: 10, border: '1.5px solid var(--border)', background: 'var(--bg-elevated)', cursor: 'pointer', marginBottom: 8, fontFamily: 'inherit' }}>
+              <span style={{ fontSize: '1.4rem' }}>🪙</span>
+              <div style={{ textAlign: 'left' }}>
+                <p style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-1)' }}>Do coin toss in app</p>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-2)', fontWeight: 500 }}>Flip a coin to decide who serves</p>
+              </div>
+            </button>
+            <button onClick={() => setTossPhase('manual_pick')}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '13px 14px', borderRadius: 10, border: '1.5px solid var(--border)', background: 'var(--bg-elevated)', cursor: 'pointer', fontFamily: 'inherit' }}>
+              <span style={{ fontSize: '1.4rem' }}>👆</span>
+              <div style={{ textAlign: 'left' }}>
+                <p style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-1)' }}>Skip toss</p>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-2)', fontWeight: 500 }}>Pick which team serves first</p>
+              </div>
+            </button>
+          </div>
+        )
+
+        // Step: toss_call — pick who calls and what they call
+        if (tossPhase === 'toss_call') return (
+          <div className="card" style={{ marginBottom: 14 }}>
+            <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>Who calls the toss?</p>
+            {['home', 'away'].map(side => (
+              <div key={side} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 14px', borderRadius: 10, border: `1.5px solid ${tossData.callerSide === side ? 'var(--accent)' : 'var(--border)'}`, background: tossData.callerSide === side ? 'var(--accent-dim)' : 'var(--bg-elevated)', marginBottom: 8, cursor: 'pointer' }}
+                onClick={() => setTossData(d => ({ ...d, callerSide: side, callerChoice: null }))}>
+                <span style={{ fontWeight: 700, fontSize: '0.88rem' }}>{nameOf(side)}</span>
+                {tossData.callerSide === side && (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {['Heads', 'Tails'].map(c => (
+                      <button key={c} onClick={e => { e.stopPropagation(); setTossData(d => ({ ...d, callerChoice: c.toLowerCase() })) }}
+                        style={{ padding: '4px 10px', borderRadius: 6, border: '1.5px solid', borderColor: tossData.callerChoice === c.toLowerCase() ? 'var(--accent)' : 'var(--border)', background: tossData.callerChoice === c.toLowerCase() ? 'var(--accent)' : 'var(--bg-card)', color: tossData.callerChoice === c.toLowerCase() ? '#fff' : 'var(--text-2)', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', fontFamily: 'inherit' }}>
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button className="btn btn-secondary" onClick={() => setTossPhase('pretoss')} style={{ flex: 1, height: 44 }}>Back</button>
+              <button className="btn btn-primary" onClick={() => {
+                const result = Math.random() < 0.5 ? 'heads' : 'tails'
+                const callerWon = result === tossData.callerChoice
+                const winnerSide = callerWon ? tossData.callerSide : (tossData.callerSide === 'home' ? 'away' : 'home')
+                setTossData(d => ({ ...d, coinResult: result, winnerSide }))
+                setTossPhase('toss_result')
+              }} disabled={!tossData.callerSide || !tossData.callerChoice} style={{ flex: 2, height: 44, opacity: (!tossData.callerSide || !tossData.callerChoice) ? 0.45 : 1 }}>
+                🪙 Flip Coin
+              </button>
+            </div>
+          </div>
+        )
+
+        // Step: toss_result — show coin result
+        if (tossPhase === 'toss_result') return (
+          <div className="card" style={{ marginBottom: 14, textAlign: 'center' }}>
+            <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'var(--gold)', border: '3px solid #b37400', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#fff', textTransform: 'uppercase', letterSpacing: '1px' }}>{tossData.coinResult}</span>
+            </div>
+            <p style={{ fontWeight: 800, fontSize: '1rem', marginBottom: 4 }}>
+              {nameOf(tossData.winnerSide)} wins the toss!
+            </p>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-2)', marginBottom: 16 }}>
+              {nameOf(tossData.callerSide)} called {tossData.callerChoice} · coin landed {tossData.coinResult}
+            </p>
+            <button className="btn btn-primary" onClick={() => setTossPhase('toss_pick')} style={{ width: '100%', height: 46 }}>
+              Continue
+            </button>
+          </div>
+        )
+
+        // Step: toss_pick — winner chooses serve or side
+        if (tossPhase === 'toss_pick') return (
+          <div className="card" style={{ marginBottom: 14 }}>
+            <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 4 }}>
+              {nameOf(tossData.winnerSide)} won — choose
+            </p>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-2)', marginBottom: 12, fontWeight: 500 }}>What does {nameOf(tossData.winnerSide)} prefer?</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+              {[{ key: 'serve', label: 'Serve First', icon: '🏐' }, { key: 'side', label: 'Pick Side', icon: '↔️' }].map(opt => (
+                <button key={opt.key} onClick={() => {
+                  const servingFirst = opt.key === 'serve' ? tossData.winnerSide : (tossData.winnerSide === 'home' ? 'away' : 'home')
+                  setTossData(d => ({ ...d, winnerChoice: opt.key, servingFirst }))
+                }}
+                  style={{ padding: '16px 10px', borderRadius: 10, border: `1.5px solid ${tossData.winnerChoice === opt.key ? 'var(--accent)' : 'var(--border)'}`, background: tossData.winnerChoice === opt.key ? 'var(--accent-dim)' : 'var(--bg-elevated)', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.4rem', marginBottom: 4 }}>{opt.icon}</div>
+                  <div style={{ fontWeight: 700, fontSize: '0.82rem', color: tossData.winnerChoice === opt.key ? 'var(--accent)' : 'var(--text-1)' }}>{opt.label}</div>
+                  {opt.key === 'serve' && tossData.winnerChoice === 'serve' && <div style={{ fontSize: '0.68rem', color: 'var(--accent)', marginTop: 2 }}>{nameOf(tossData.winnerSide)} serves</div>}
+                  {opt.key === 'side' && tossData.winnerChoice === 'side' && <div style={{ fontSize: '0.68rem', color: 'var(--accent)', marginTop: 2 }}>{nameOf(tossData.servingFirst)} serves</div>}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setTossPhase('toss_result')} style={{ flex: 1, height: 44 }}>Back</button>
+              <button className="btn btn-primary" onClick={() => setTossPhase('done')} disabled={!tossData.winnerChoice} style={{ flex: 2, height: 44, opacity: !tossData.winnerChoice ? 0.45 : 1 }}>
+                Confirm
+              </button>
+            </div>
+          </div>
+        )
+
+        // Step: manual_pick — admin picks serving team directly
+        if (tossPhase === 'manual_pick') return (
+          <div className="card" style={{ marginBottom: 14 }}>
+            <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>Which team serves first?</p>
+            {['home', 'away'].map(side => (
+              <div key={side} onClick={() => setTossData(d => ({ ...d, servingFirst: side, winnerSide: side, winnerChoice: 'serve' }))}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 14px', borderRadius: 10, border: `1.5px solid ${tossData.servingFirst === side ? 'var(--accent)' : 'var(--border)'}`, background: tossData.servingFirst === side ? 'var(--accent-dim)' : 'var(--bg-elevated)', marginBottom: 8, cursor: 'pointer' }}>
+                <span style={{ fontWeight: 700, fontSize: '0.88rem' }}>{nameOf(side)}</span>
+                <div style={{ width: 18, height: 18, borderRadius: '50%', border: `2px solid ${tossData.servingFirst === side ? 'var(--accent)' : 'var(--border)'}`, background: tossData.servingFirst === side ? 'var(--accent)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {tossData.servingFirst === side && <span style={{ color: '#fff', fontSize: '0.6rem', fontWeight: 900 }}>✓</span>}
+                </div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button className="btn btn-secondary" onClick={() => { setTossPhase('pretoss'); setTossData(d => ({ ...d, servingFirst: null })) }} style={{ flex: 1, height: 44 }}>Back</button>
+              <button className="btn btn-primary" onClick={() => setTossPhase('done')} disabled={!tossData.servingFirst} style={{ flex: 2, height: 44, opacity: !tossData.servingFirst ? 0.45 : 1 }}>
+                Confirm
+              </button>
+            </div>
+          </div>
+        )
+
+        return null
+      })()}
+
       {/* Start match */}
-      {isAdmin && fixture.status === 'scheduled' && (
+      {isAdmin && fixture.status === 'scheduled' && tossPhase === 'done' && (
         <div style={{ marginBottom: 12 }}>
           {/* Live stream URL */}
           <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>
@@ -473,7 +623,9 @@ export default function Scoring() {
           <button
             onClick={async () => {
               if (!window.confirm('Undo match start? This will reset the match back to scheduled.')) return
-              await save({ status: 'scheduled', sets: null, currentSet: null, lineup: null, liveUrl: null, homeScore: null, awayScore: null })
+              await save({ status: 'scheduled', sets: null, currentSet: null, lineup: null, liveUrl: null, homeScore: null, awayScore: null, servingTeam: null, toss: null })
+              setTossPhase('pretoss')
+              setTossData({ callerSide: null, callerChoice: null, coinResult: null, winnerSide: null, winnerChoice: null, servingFirst: null })
             }}
             disabled={busy}
             style={{ width: '100%', height: 42, borderRadius: 10, border: '1.5px solid rgba(220,38,38,0.3)', background: 'rgba(220,38,38,0.06)', color: '#dc2626', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', fontFamily: 'inherit' }}>
