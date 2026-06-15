@@ -238,6 +238,10 @@ export default function Scoring() {
     const sets = [...fixture.sets, emptySet()]
     const updates = { sets, currentSet: fixture.currentSet + 1 }
     if (fixture.lineup) updates.lineup = fixture.lineup
+    // Alternate starting server each set
+    if (fixture.servingTeam) {
+      updates.servingTeam = fixture.servingTeam === 'home' ? 'away' : 'home'
+    }
     await save(updates)
   }
 
