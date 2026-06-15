@@ -153,6 +153,11 @@ export default function Scoring() {
     const sA = sets.filter(s => s.winner === 'away').length
     const updates = { sets, status: 'live' }
 
+    // Flip serving team every rally
+    if (fixture.servingTeam) {
+      updates.servingTeam = fixture.servingTeam === 'home' ? 'away' : 'home'
+    }
+
     const matchOver = sH >= SETS_TO_WIN || sA >= SETS_TO_WIN
     // Guard: only update stats once. completingRef is set synchronously so a
     // second rapid tap before onSnapshot updates fixture.status is also blocked.
@@ -691,6 +696,17 @@ export default function Scoring() {
         </div>
       )}
 
+      {/* Toss info strip */}
+      {fixture.toss && isLive && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,85,0,0.06)', border: '1px solid rgba(255,85,0,0.15)', borderRadius: 10, padding: '8px 14px', marginBottom: 10 }}>
+          <span style={{ fontSize: '0.95rem' }}>🪙</span>
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-2)', fontWeight: 600 }}>
+            {fixture.toss.winnerSide === 'home' ? fixture.homeTeam?.name : fixture.awayTeam?.name} won toss
+            {fixture.toss.winnerChoice ? ` · chose to ${fixture.toss.winnerChoice}` : ''}
+          </p>
+        </div>
+      )}
+
       {/* Scoreboard */}
       {!setWon && (
         <div className="card" style={{ padding: '20px 16px 18px', marginBottom: 12, border: isLive ? '1px solid rgba(255,85,0,0.15)' : '1px solid var(--border)', overflow: 'hidden', position: 'relative' }}>
@@ -701,15 +717,15 @@ export default function Scoring() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', gap: 8 }}>
             {isAdmin && !isCompleted ? (
               <>
-                <AdminControl label={fixture.homeTeam?.name} score={curSet.home} leading={curSet.home > curSet.away} onAdd={() => addPoint('home')} onSub={() => subPoint('home')} busy={busy} />
+                <AdminControl label={fixture.homeTeam?.name} score={curSet.home} leading={curSet.home > curSet.away} onAdd={() => addPoint('home')} onSub={() => subPoint('home')} busy={busy} isServing={fixture.servingTeam === 'home'} />
                 <span style={{ fontSize: '1.8rem', fontWeight: 900, color: 'var(--border)' }}>:</span>
-                <AdminControl label={fixture.awayTeam?.name} score={curSet.away} leading={curSet.away > curSet.home} onAdd={() => addPoint('away')} onSub={() => subPoint('away')} busy={busy} />
+                <AdminControl label={fixture.awayTeam?.name} score={curSet.away} leading={curSet.away > curSet.home} onAdd={() => addPoint('away')} onSub={() => subPoint('away')} busy={busy} isServing={fixture.servingTeam === 'away'} />
               </>
             ) : (
               <>
-                <ReadOnlyScore label={fixture.homeTeam?.name} score={curSet.home} leading={curSet.home > curSet.away} logo={fixture.homeTeam?.logoUrl} />
+                <ReadOnlyScore label={fixture.homeTeam?.name} score={curSet.home} leading={curSet.home > curSet.away} logo={fixture.homeTeam?.logoUrl} isServing={fixture.servingTeam === 'home'} />
                 <span style={{ fontSize: '1.8rem', fontWeight: 900, color: 'var(--border)' }}>:</span>
-                <ReadOnlyScore label={fixture.awayTeam?.name} score={curSet.away} leading={curSet.away > curSet.home} logo={fixture.awayTeam?.logoUrl} />
+                <ReadOnlyScore label={fixture.awayTeam?.name} score={curSet.away} leading={curSet.away > curSet.home} logo={fixture.awayTeam?.logoUrl} isServing={fixture.servingTeam === 'away'} />
               </>
             )}
           </div>
@@ -1007,10 +1023,16 @@ function TeamHeader({ team, right }) {
 }
 
 // ── Admin score control ───────────────────────────────────
-function AdminControl({ label, score, leading, onAdd, onSub, busy }) {
+function AdminControl({ label, score, leading, onAdd, onSub, busy, isServing }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, flex: 1 }}>
       <p className="score-panel-name" style={{ color: 'var(--text-2)', fontWeight: 600 }}>{label}</p>
+      {isServing && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,85,0,0.1)', border: '1px solid rgba(255,85,0,0.25)', borderRadius: 20, padding: '2px 8px' }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)' }} />
+          <span style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Serving</span>
+        </div>
+      )}
       <button className="btn btn-primary" onClick={onAdd} disabled={busy}
         style={{ width: 58, height: 58, borderRadius: '50%', fontSize: '1.8rem', padding: 0 }}>+</button>
       <span style={{ fontSize: '4rem', fontWeight: 900, lineHeight: 1, color: leading ? 'var(--text-1)' : 'var(--text-3)', letterSpacing: '-3px', fontVariantNumeric: 'tabular-nums', transition: 'color 200ms ease' }}>
@@ -1023,11 +1045,17 @@ function AdminControl({ label, score, leading, onAdd, onSub, busy }) {
 }
 
 // ── Read-only score ───────────────────────────────────────
-function ReadOnlyScore({ label, score, leading, logo }) {
+function ReadOnlyScore({ label, score, leading, logo, isServing }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, flex: 1 }}>
       {logo && <img src={logo} alt={label} style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} />}
       <p className="score-panel-name" style={{ color: 'var(--text-2)', fontWeight: 600 }}>{label}</p>
+      {isServing && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,85,0,0.1)', border: '1px solid rgba(255,85,0,0.25)', borderRadius: 20, padding: '2px 8px' }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)' }} />
+          <span style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Serving</span>
+        </div>
+      )}
       <span style={{ fontSize: '4.5rem', fontWeight: 900, lineHeight: 1, color: leading ? 'var(--text-1)' : 'var(--text-3)', letterSpacing: '-3px', fontVariantNumeric: 'tabular-nums', transition: 'color 200ms ease' }}>
         {score}
       </span>
