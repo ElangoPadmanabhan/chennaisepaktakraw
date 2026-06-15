@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import Spinner from '../components/Spinner'
 import { useParams, useNavigate } from 'react-router-dom'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import {
   doc, getDoc, updateDoc, collection,
   addDoc, onSnapshot, deleteDoc, serverTimestamp,
@@ -863,6 +865,7 @@ function FixturesSection({ leagueId, league, teams }) {
   const [rescheduleSaving, setRescheduleSaving]   = useState(false)
   const [powByDate, setPowByDate]   = useState({})
   const [powSheetDate, setPowSheetDate] = useState(null)
+  const [showInspector, setShowInspector] = useState(false)
 
   useEffect(() => {
     return onSnapshot(collection(db, 'leagues', leagueId, 'fixtures'), snap => {
@@ -949,6 +952,79 @@ function FixturesSection({ leagueId, league, teams }) {
   })
   const existingDates = Object.keys(existingByDate).sort()
 
+  const downloadFixturesPDF = () => {
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const pageW = pdf.internal.pageSize.getWidth()
+
+    // Header
+    pdf.setFillColor(26, 26, 46)
+    pdf.rect(0, 0, pageW, 28, 'F')
+    pdf.setTextColor(255, 255, 255)
+    pdf.setFont('helvetica', 'bold')
+    pdf.setFontSize(16)
+    pdf.text('Chennai Sepak Takraw League', pageW / 2, 11, { align: 'center' })
+    pdf.setFontSize(10)
+    pdf.setFont('helvetica', 'normal')
+    pdf.text(`${league.name} · ${league.year || ''}`, pageW / 2, 19, { align: 'center' })
+    pdf.text(`Generated: ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`, pageW / 2, 25, { align: 'center' })
+
+    let y = 34
+    existingDates.forEach(date => {
+      const fixtures = existingByDate[date]
+      const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+
+      // Date heading
+      pdf.setFont('helvetica', 'bold')
+      pdf.setFontSize(10)
+      pdf.setTextColor(255, 85, 0)
+      pdf.text(dateLabel, 14, y)
+      y += 2
+
+      const rows = fixtures.map((f, i) => {
+        const status = f.status === 'completed'
+          ? `${f.homeScore ?? 0} – ${f.awayScore ?? 0}`
+          : f.status === 'live' ? 'Live' : 'Scheduled'
+        return [
+          i + 1,
+          f.homeTeam?.name || '—',
+          'vs',
+          f.awayTeam?.name || '—',
+          f.event || '—',
+          `Leg ${f.leg || '—'}`,
+          status,
+        ]
+      })
+
+      autoTable(pdf, {
+        startY: y,
+        head: [['#', 'Home Team', '', 'Away Team', 'Event', 'Leg', 'Result']],
+        body: rows,
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 3, textColor: [30, 30, 30] },
+        headStyles: { fillColor: [26, 26, 46], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+        columnStyles: {
+          0: { cellWidth: 8, halign: 'center' },
+          2: { cellWidth: 8, halign: 'center', textColor: [150, 150, 150] },
+          4: { cellWidth: 18 },
+          5: { cellWidth: 14 },
+          6: { cellWidth: 22, halign: 'center' },
+        },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        margin: { left: 14, right: 14 },
+      })
+
+      y = pdf.lastAutoTable.finalY + 8
+    })
+
+    // Footer
+    pdf.setFontSize(7)
+    pdf.setTextColor(150)
+    pdf.setFont('helvetica', 'normal')
+    pdf.text('Chennai Sepak Takraw League · Fixture Schedule', pageW / 2, pdf.internal.pageSize.getHeight() - 6, { align: 'center' })
+
+    pdf.save(`${league.name}-fixtures.pdf`)
+  }
+
   const totalMatches = preview
     ? preview.reduce((s, r) => s + r.matches.length, 0)
     : existing.length
@@ -970,9 +1046,15 @@ function FixturesSection({ leagueId, league, teams }) {
           </button>
         )}
         {existing.length > 0 && (
-          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px' }}>
-            🔒 Locked
-          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button onClick={downloadFixturesPDF}
+              style={{ height: 36, padding: '0 12px', borderRadius: 8, border: '1.5px solid rgba(255,85,0,0.3)', background: 'rgba(255,85,0,0.06)', color: 'var(--accent)', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
+              ⬇ PDF
+            </button>
+            <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px' }}>
+              🔒 Locked
+            </span>
+          </div>
         )}
       </div>
 
