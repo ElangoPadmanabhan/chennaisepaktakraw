@@ -230,7 +230,11 @@ export default function Scoring() {
       updated.winner = checkSetWinner(updated.home, updated.away)
       return updated
     })
-    await save({ sets })
+    const updates = { sets }
+    if (fixture.servingTeam) {
+      updates.servingTeam = fixture.servingTeam === 'home' ? 'away' : 'home'
+    }
+    await save(updates)
   }
 
   const nextSet = async () => {
@@ -1030,13 +1034,15 @@ function TeamHeader({ team, right }) {
 function AdminControl({ label, score, leading, onAdd, onSub, busy, isServing }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, flex: 1 }}>
-      <p className="score-panel-name" style={{ color: 'var(--text-2)', fontWeight: 600 }}>{label}</p>
-      {isServing && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,85,0,0.1)', border: '1px solid rgba(255,85,0,0.25)', borderRadius: 20, padding: '2px 8px' }}>
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)' }} />
-          <span style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Serving</span>
-        </div>
-      )}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+        <p className="score-panel-name" style={{ color: 'var(--text-2)', fontWeight: 600 }}>{label}</p>
+        {isServing && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,85,0,0.1)', border: '1px solid rgba(255,85,0,0.25)', borderRadius: 20, padding: '2px 8px' }}>
+            <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }} />
+            <span style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Serving</span>
+          </div>
+        )}
+      </div>
       <button className="btn btn-primary" onClick={onAdd} disabled={busy}
         style={{ width: 58, height: 58, borderRadius: '50%', fontSize: '1.8rem', padding: 0 }}>+</button>
       <span style={{ fontSize: '4rem', fontWeight: 900, lineHeight: 1, color: leading ? 'var(--text-1)' : 'var(--text-3)', letterSpacing: '-3px', fontVariantNumeric: 'tabular-nums', transition: 'color 200ms ease' }}>
@@ -1053,13 +1059,15 @@ function ReadOnlyScore({ label, score, leading, logo, isServing }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, flex: 1 }}>
       {logo && <img src={logo} alt={label} style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} />}
-      <p className="score-panel-name" style={{ color: 'var(--text-2)', fontWeight: 600 }}>{label}</p>
-      {isServing && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,85,0,0.1)', border: '1px solid rgba(255,85,0,0.25)', borderRadius: 20, padding: '2px 8px' }}>
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)' }} />
-          <span style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Serving</span>
-        </div>
-      )}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+        <p className="score-panel-name" style={{ color: 'var(--text-2)', fontWeight: 600 }}>{label}</p>
+        {isServing && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,85,0,0.1)', border: '1px solid rgba(255,85,0,0.25)', borderRadius: 20, padding: '2px 8px' }}>
+            <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }} />
+            <span style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Serving</span>
+          </div>
+        )}
+      </div>
       <span style={{ fontSize: '4.5rem', fontWeight: 900, lineHeight: 1, color: leading ? 'var(--text-1)' : 'var(--text-3)', letterSpacing: '-3px', fontVariantNumeric: 'tabular-nums', transition: 'color 200ms ease' }}>
         {score}
       </span>
