@@ -54,7 +54,7 @@ export default function App() {
           transform: 'translate(-50%, -50%)',
           width: '75vw',
           maxWidth: 420,
-          opacity: 0.18,
+          opacity: 0.08,
           mixBlendMode: 'multiply',
           pointerEvents: 'none',
           zIndex: 0,
