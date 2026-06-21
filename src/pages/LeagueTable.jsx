@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { collection, onSnapshot } from 'firebase/firestore'
+import { collection, onSnapshot, getDocs, doc, updateDoc } from 'firebase/firestore'
 import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { useLeagues } from '../context/LeaguesContext'
@@ -23,6 +23,8 @@ export default function LeagueTable() {
   const [fixtures, setFixtures]       = useState([])
   const [activeEvent, setActiveEvent] = useState(null)
   const [supportCounts, setSupportCounts] = useState({}) // { teamId: count }
+  const [recalcBusy, setRecalcBusy]       = useState(false)
+  const [recalcDone, setRecalcDone]       = useState(false)
 
   // Sync selectedLeague when leagues arrive or change
   useEffect(() => {
@@ -123,6 +125,69 @@ export default function LeagueTable() {
     return eventFixtures.length > 0 && eventFixtures.every(f => f.status === 'completed')
   }
   const currentEventComplete = isEventComplete(activeEvent)
+
+  const recalcTable = async () => {
+    if (!selectedLeague || !isAdmin || recalcBusy) return
+    setRecalcBusy(true)
+    setRecalcDone(false)
+    try {
+      const fixSnap = await getDocs(collection(db, 'leagues', selectedLeague.id, 'fixtures'))
+      const allFixtures = fixSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const zero = () => ({ p:0, w:0, l:0, pts:0, setsWon:0, setsLost:0, ptsFor:0, ptsAgainst:0 })
+      const statsMap = {}
+      teams.forEach(t => {
+        statsMap[t.id] = {}
+        ;(selectedLeague.events || []).forEach(ev => { statsMap[t.id][ev] = zero() })
+      })
+      allFixtures.filter(f => f.status === 'completed').forEach(f => {
+        const homeId = f.homeTeam?.id
+        const awayId = f.awayTeam?.id
+        const ev     = f.event
+        if (!homeId || !awayId || !ev) return
+        if (!statsMap[homeId]?.[ev]) { if (statsMap[homeId]) statsMap[homeId][ev] = zero() }
+        if (!statsMap[awayId]?.[ev]) { if (statsMap[awayId]) statsMap[awayId][ev] = zero() }
+        if (!statsMap[homeId] || !statsMap[awayId]) return
+        const sets = (f.sets || []).filter(s => s.winner)
+        const sH = sets.filter(s => s.winner === 'home').length
+        const sA = sets.filter(s => s.winner === 'away').length
+        const homeWon   = sH > sA
+        const totalHome = sets.reduce((sum, s) => sum + (s.home || 0), 0)
+        const totalAway = sets.reduce((sum, s) => sum + (s.away || 0), 0)
+        const addTo = (id, won, sw, sl, pf, pa) => {
+          statsMap[id][ev].p++
+          statsMap[id][ev].w          += won ? 1 : 0
+          statsMap[id][ev].l          += won ? 0 : 1
+          statsMap[id][ev].pts        += won ? 2 : 0
+          statsMap[id][ev].setsWon    += sw
+          statsMap[id][ev].setsLost   += sl
+          statsMap[id][ev].ptsFor     += pf
+          statsMap[id][ev].ptsAgainst += pa
+        }
+        addTo(homeId, homeWon,  sH, sA, totalHome, totalAway)
+        addTo(awayId, !homeWon, sA, sH, totalAway, totalHome)
+      })
+      await Promise.all(
+        Object.entries(statsMap).map(([teamId, evStats]) => {
+          const upd = {}
+          Object.entries(evStats).forEach(([ev, s]) => {
+            upd[`eventStats.${ev}.p`]          = s.p
+            upd[`eventStats.${ev}.w`]          = s.w
+            upd[`eventStats.${ev}.l`]          = s.l
+            upd[`eventStats.${ev}.pts`]        = s.pts
+            upd[`eventStats.${ev}.setsWon`]    = s.setsWon
+            upd[`eventStats.${ev}.setsLost`]   = s.setsLost
+            upd[`eventStats.${ev}.ptsFor`]     = s.ptsFor
+            upd[`eventStats.${ev}.ptsAgainst`] = s.ptsAgainst
+          })
+          return updateDoc(doc(db, 'leagues', selectedLeague.id, 'teams', teamId), upd)
+        })
+      )
+      setRecalcDone(true)
+      setTimeout(() => setRecalcDone(false), 3000)
+    } finally {
+      setRecalcBusy(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -236,6 +301,16 @@ export default function LeagueTable() {
               </button>
             )
           })}
+        </div>
+      )}
+
+      {/* Admin: Recalculate Table */}
+      {isAdmin && teams.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <button onClick={recalcTable} disabled={recalcBusy}
+            style={{ width: '100%', height: 40, borderRadius: 10, border: `1.5px solid ${recalcDone ? 'rgba(34,197,94,0.4)' : 'var(--border)'}`, background: recalcDone ? 'rgba(34,197,94,0.06)' : 'var(--bg-elevated)', color: recalcDone ? '#16a34a' : 'var(--text-2)', fontWeight: 700, fontSize: '0.8rem', cursor: recalcBusy ? 'default' : 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            {recalcBusy ? '⟳ Recalculating…' : recalcDone ? '✓ Table Recalculated' : '⟳ Recalculate Table'}
+          </button>
         </div>
       )}
 

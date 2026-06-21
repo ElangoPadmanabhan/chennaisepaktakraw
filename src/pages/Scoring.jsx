@@ -74,6 +74,7 @@ export default function Scoring() {
   const [tossData, setTossData]   = useState({ callerSide: null, callerChoice: null, coinResult: null, winnerSide: null, winnerChoice: null, servingFirst: null })
   // sub/re-entry modal
   const [subModal, setSubModal] = useState(null) // { side, type: 'sub'|'reentry' }
+  const [editScoresMode, setEditScoresMode] = useState(false)
 
   // ── Timeout countdown ─────────────────────────────────
   useEffect(() => {
@@ -130,6 +131,7 @@ export default function Scoring() {
 
   // ── Score actions ─────────────────────────────────────
   const addPoint = (side) => {
+    if (fixture.status === 'completed') return
     const curSet = fixture.sets[fixture.currentSet] || emptySet()
     const newH = side === 'home' ? (curSet.home || 0) + 1 : (curSet.home || 0)
     const newA = side === 'away' ? (curSet.away || 0) + 1 : (curSet.away || 0)
@@ -143,6 +145,7 @@ export default function Scoring() {
   }
 
   const doAddPoint = async (side) => {
+    if (fixture.status === 'completed') return
     const sets = fixture.sets.map((s, i) => {
       if (i !== fixture.currentSet) return s
       const updated = { ...s, [side]: (s[side] || 0) + 1 }
@@ -239,12 +242,50 @@ export default function Scoring() {
 
   const nextSet = async () => {
     if (fixture.currentSet >= MAX_SETS - 1) return
+    if (fixture.status === 'completed') return
     const sets = [...fixture.sets, emptySet()]
     const updates = { sets, currentSet: fixture.currentSet + 1 }
     if (fixture.lineup) updates.lineup = fixture.lineup
     // Alternate starting server each set
     if (fixture.servingTeam) {
       updates.servingTeam = fixture.servingTeam === 'home' ? 'away' : 'home'
+    }
+    await save(updates)
+  }
+
+  const editSetScore = async (setIndex, side, delta) => {
+    const updatedSets = fixture.sets.map((s, i) => {
+      if (i !== setIndex) return s
+      const updated = { ...s, [side]: Math.max(0, (s[side] || 0) + delta) }
+      updated.winner = checkSetWinner(updated.home, updated.away)
+      return updated
+    })
+    const sH = updatedSets.filter(s => s.winner === 'home').length
+    const sA = updatedSets.filter(s => s.winner === 'away').length
+    const updates = { sets: updatedSets }
+    if (sH >= SETS_TO_WIN || sA >= SETS_TO_WIN) {
+      updates.status    = 'completed'
+      updates.homeScore = sH
+      updates.awayScore = sA
+    }
+    await save(updates)
+  }
+
+  const removeLastSet = async () => {
+    if (fixture.sets.length <= 1) return
+    const trimmed = fixture.sets.slice(0, -1)
+    const newCur  = Math.min(fixture.currentSet, trimmed.length - 1)
+    const sH = trimmed.filter(s => s.winner === 'home').length
+    const sA = trimmed.filter(s => s.winner === 'away').length
+    const updates = { sets: trimmed, currentSet: newCur }
+    if (sH >= SETS_TO_WIN || sA >= SETS_TO_WIN) {
+      updates.status    = 'completed'
+      updates.homeScore = sH
+      updates.awayScore = sA
+    } else {
+      updates.status    = 'live'
+      updates.homeScore = null
+      updates.awayScore = null
     }
     await save(updates)
   }
@@ -777,25 +818,63 @@ export default function Scoring() {
       {/* Set history */}
       {sets.length > 0 && (
         <div className="card" style={{ marginBottom: 12 }}>
-          <p className="card-label">Set History</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <p className="card-label" style={{ marginBottom: 0 }}>Set History</p>
+            {isAdmin && (
+              <button onClick={() => setEditScoresMode(v => !v)}
+                style={{ fontSize: '0.68rem', fontWeight: 700, padding: '3px 10px', borderRadius: 8, border: `1.5px solid ${editScoresMode ? 'var(--accent)' : 'var(--border)'}`, background: editScoresMode ? 'var(--accent-dim)' : 'var(--bg-elevated)', color: editScoresMode ? 'var(--accent)' : 'var(--text-2)', cursor: 'pointer', fontFamily: 'inherit' }}>
+                {editScoresMode ? 'Done Editing' : 'Edit Scores'}
+              </button>
+            )}
+          </div>
+
           {sets.map((s, i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: i < sets.length - 1 ? '1px solid var(--border)' : 'none' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: '0.82rem', color: 'var(--text-2)', fontWeight: 600, minWidth: 46 }}>Set {i + 1}</span>
-                {i === cur && isLive && !setWon && <span className="badge badge-live" style={{ fontSize: '0.58rem' }}>Now</span>}
-                {s.winner && (
-                  <span style={{ fontSize: '0.62rem', fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: 'rgba(255,85,0,0.08)', color: 'var(--accent)', border: '1px solid rgba(255,85,0,0.15)' }}>
-                    {s.winner === 'home' ? fixture.homeTeam?.name : fixture.awayTeam?.name} won
-                  </span>
-                )}
+            <div key={i} style={{ padding: '10px 0', borderBottom: i < sets.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--text-2)', fontWeight: 600, minWidth: 46 }}>Set {i + 1}</span>
+                  {i === cur && isLive && !setWon && <span className="badge badge-live" style={{ fontSize: '0.58rem' }}>Now</span>}
+                  {s.winner && (
+                    <span style={{ fontSize: '0.62rem', fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: 'rgba(255,85,0,0.08)', color: 'var(--accent)', border: '1px solid rgba(255,85,0,0.15)' }}>
+                      {s.winner === 'home' ? fixture.homeTeam?.name : fixture.awayTeam?.name} won
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <span style={{ fontWeight: 800, fontSize: '1rem', color: s.home > s.away ? 'var(--text-1)' : 'var(--text-3)', fontVariantNumeric: 'tabular-nums' }}>{s.home}</span>
+                  <span style={{ color: 'var(--text-3)', fontWeight: 700 }}>–</span>
+                  <span style={{ fontWeight: 800, fontSize: '1rem', color: s.away > s.home ? 'var(--text-1)' : 'var(--text-3)', fontVariantNumeric: 'tabular-nums' }}>{s.away}</span>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                <span style={{ fontWeight: 800, fontSize: '1rem', color: s.home > s.away ? 'var(--text-1)' : 'var(--text-3)', fontVariantNumeric: 'tabular-nums' }}>{s.home}</span>
-                <span style={{ color: 'var(--text-3)', fontWeight: 700 }}>–</span>
-                <span style={{ fontWeight: 800, fontSize: '1rem', color: s.away > s.home ? 'var(--text-1)' : 'var(--text-3)', fontVariantNumeric: 'tabular-nums' }}>{s.away}</span>
-              </div>
+
+              {editScoresMode && isAdmin && (
+                <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {[{ label: fixture.homeTeam?.name, side: 'home', score: s.home },
+                    { label: fixture.awayTeam?.name, side: 'away', score: s.away }].map(({ label, side, score }) => (
+                    <div key={side} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-elevated)', borderRadius: 8, padding: '6px 10px', border: '1px solid var(--border)' }}>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 70 }}>{label}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <button onClick={() => editSetScore(i, side, -1)} disabled={busy || score <= 0}
+                          style={{ width: 26, height: 26, borderRadius: 6, border: '1.5px solid var(--border)', background: 'var(--bg-card)', fontWeight: 900, fontSize: '1rem', cursor: score > 0 ? 'pointer' : 'default', color: 'var(--text-2)', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                        <span style={{ fontWeight: 800, fontSize: '0.95rem', minWidth: 18, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{score}</span>
+                        <button onClick={() => editSetScore(i, side, +1)} disabled={busy}
+                          style={{ width: 26, height: 26, borderRadius: 6, border: '1.5px solid var(--accent)', background: 'var(--accent-dim)', fontWeight: 900, fontSize: '1rem', cursor: 'pointer', color: 'var(--accent)', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
+
+          {editScoresMode && isAdmin && sets.length > 1 && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <button onClick={removeLastSet} disabled={busy}
+                style={{ width: '100%', height: 38, borderRadius: 10, border: '1.5px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.06)', color: '#dc2626', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit' }}>
+                Remove Set {sets.length} (undo accidental set)
+              </button>
+            </div>
+          )}
         </div>
       )}
 
