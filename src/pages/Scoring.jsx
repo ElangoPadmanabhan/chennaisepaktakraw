@@ -145,6 +145,7 @@ export default function Scoring() {
   }
 
   const doAddPoint = async (side) => {
+    if (fixture.status === 'completed') return
     const sets = fixture.sets.map((s, i) => {
       if (i !== fixture.currentSet) return s
       const updated = { ...s, [side]: (s[side] || 0) + 1 }
