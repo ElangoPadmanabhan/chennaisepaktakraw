@@ -1124,7 +1124,7 @@ function FixturesSection({ leagueId, league, teams }) {
             {collapsed ? '▼ Show Fixtures' : '▲ Hide Fixtures'}
           </button>
           {!collapsed && existingDates.map(date => (
-            <ExistingDateGroup key={date} date={date} fixtures={existingByDate[date]} events={events} onReschedule={openReschedule} pow={powByDate[date] || null} onSetPow={() => setPowSheetDate(date)} />
+            <ExistingDateGroup key={date} date={date} fixtures={existingByDate[date]} events={events} onReschedule={openReschedule} pow={powByDate[date] || null} onSetPow={() => setPowSheetDate(date)} leagueId={leagueId} />
           ))}
         </>
       )}
@@ -1219,7 +1219,8 @@ function PreviewSunday({ sunday }) {
 }
 
 /* ── Existing fixtures date group ── */
-function ExistingDateGroup({ date, fixtures, events, onReschedule, pow, onSetPow }) {
+function ExistingDateGroup({ date, fixtures, events, onReschedule, pow, onSetPow, leagueId }) {
+  const navigate = useNavigate()
   const allCompleted = fixtures.length > 0 && fixtures.every(f => f.status === 'completed')
 
   return (
@@ -1262,6 +1263,12 @@ function ExistingDateGroup({ date, fixtures, events, onReschedule, pow, onSetPow
             <button onClick={() => onReschedule(f)} title="Reschedule"
               style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-elevated)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               <svg width="13" height="13" fill="none" stroke="var(--text-2)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </button>
+          )}
+          {f.status === 'completed' && leagueId && (
+            <button onClick={() => navigate(`/scoring/${leagueId}/${f.id}`)} title="Edit Score"
+              style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(255,85,0,0.25)', background: 'rgba(255,85,0,0.06)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <svg width="13" height="13" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
           )}
         </div>
