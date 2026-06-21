@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { collection, onSnapshot } from 'firebase/firestore'
+import { collection, onSnapshot, getDocs, doc, updateDoc } from 'firebase/firestore'
 import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { useLeagues } from '../context/LeaguesContext'
@@ -23,6 +23,8 @@ export default function LeagueTable() {
   const [fixtures, setFixtures]       = useState([])
   const [activeEvent, setActiveEvent] = useState(null)
   const [supportCounts, setSupportCounts] = useState({}) // { teamId: count }
+  const [recalcBusy, setRecalcBusy]       = useState(false)
+  const [recalcDone, setRecalcDone]       = useState(false)
 
   // Sync selectedLeague when leagues arrive or change
   useEffect(() => {
@@ -124,6 +126,79 @@ export default function LeagueTable() {
   }
   const currentEventComplete = isEventComplete(activeEvent)
 
+  // Recompute every team's stats from scratch using the actual fixture data.
+  // Uses SET (not increment) so it is safe to run multiple times.
+  const recalcTable = async () => {
+    if (!selectedLeague || !isAdmin || recalcBusy) return
+    setRecalcBusy(true)
+    setRecalcDone(false)
+    try {
+      const fixSnap = await getDocs(collection(db, 'leagues', selectedLeague.id, 'fixtures'))
+      const allFixtures = fixSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+
+      // Build a zeroed stats accumulator for each team × event
+      const zero = () => ({ p:0, w:0, l:0, pts:0, setsWon:0, setsLost:0, ptsFor:0, ptsAgainst:0 })
+      const statsMap = {}
+      teams.forEach(t => {
+        statsMap[t.id] = {}
+        ;(selectedLeague.events || []).forEach(ev => { statsMap[t.id][ev] = zero() })
+      })
+
+      // Accumulate from every completed fixture
+      allFixtures.filter(f => f.status === 'completed').forEach(f => {
+        const homeId = f.homeTeam?.id
+        const awayId = f.awayTeam?.id
+        const ev     = f.event
+        if (!homeId || !awayId || !ev) return
+        if (!statsMap[homeId]?.[ev]) { if (statsMap[homeId]) statsMap[homeId][ev] = zero() }
+        if (!statsMap[awayId]?.[ev]) { if (statsMap[awayId]) statsMap[awayId][ev] = zero() }
+        if (!statsMap[homeId] || !statsMap[awayId]) return
+
+        const sets = (f.sets || []).filter(s => s.winner)  // only finished sets
+        const sH = sets.filter(s => s.winner === 'home').length
+        const sA = sets.filter(s => s.winner === 'away').length
+        const homeWon  = sH > sA
+        const totalHome = sets.reduce((sum, s) => sum + (s.home || 0), 0)
+        const totalAway = sets.reduce((sum, s) => sum + (s.away || 0), 0)
+
+        const addTo = (id, won, sw, sl, pf, pa) => {
+          statsMap[id][ev].p++
+          statsMap[id][ev].w       += won ? 1 : 0
+          statsMap[id][ev].l       += won ? 0 : 1
+          statsMap[id][ev].pts     += won ? 2 : 0
+          statsMap[id][ev].setsWon += sw
+          statsMap[id][ev].setsLost+= sl
+          statsMap[id][ev].ptsFor  += pf
+          statsMap[id][ev].ptsAgainst += pa
+        }
+        addTo(homeId, homeWon,  sH, sA, totalHome, totalAway)
+        addTo(awayId, !homeWon, sA, sH, totalAway, totalHome)
+      })
+
+      // Write corrected stats back (overwrite, not increment)
+      await Promise.all(
+        Object.entries(statsMap).map(([teamId, evStats]) => {
+          const upd = {}
+          Object.entries(evStats).forEach(([ev, s]) => {
+            upd[`eventStats.${ev}.p`]          = s.p
+            upd[`eventStats.${ev}.w`]          = s.w
+            upd[`eventStats.${ev}.l`]          = s.l
+            upd[`eventStats.${ev}.pts`]        = s.pts
+            upd[`eventStats.${ev}.setsWon`]    = s.setsWon
+            upd[`eventStats.${ev}.setsLost`]   = s.setsLost
+            upd[`eventStats.${ev}.ptsFor`]     = s.ptsFor
+            upd[`eventStats.${ev}.ptsAgainst`] = s.ptsAgainst
+          })
+          return updateDoc(doc(db, 'leagues', selectedLeague.id, 'teams', teamId), upd)
+        })
+      )
+      setRecalcDone(true)
+      setTimeout(() => setRecalcDone(false), 3000)
+    } finally {
+      setRecalcBusy(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="page">
@@ -191,6 +266,22 @@ export default function LeagueTable() {
           </span>
         )}
       </div>
+
+      {/* Admin: recalculate table from fixture data */}
+      {isAdmin && selectedLeague && (
+        <div style={{ marginBottom: 14 }}>
+          <button
+            onClick={recalcTable}
+            disabled={recalcBusy}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 36, padding: '0 14px', borderRadius: 10, border: `1.5px solid ${recalcDone ? 'rgba(34,197,94,0.5)' : 'rgba(255,85,0,0.3)'}`, background: recalcDone ? 'rgba(34,197,94,0.08)' : 'rgba(255,85,0,0.06)', color: recalcDone ? '#16a34a' : 'var(--accent)', fontWeight: 700, fontSize: '0.78rem', cursor: recalcBusy ? 'default' : 'pointer', fontFamily: 'inherit', opacity: recalcBusy ? 0.6 : 1, transition: 'all 200ms ease' }}>
+            <span style={{ fontSize: '1rem' }}>{recalcDone ? '✓' : recalcBusy ? '⏳' : '🔄'}</span>
+            {recalcDone ? 'Table updated!' : recalcBusy ? 'Recalculating…' : 'Recalculate Table'}
+          </button>
+          <p style={{ fontSize: '0.68rem', color: 'var(--text-3)', marginTop: 5, paddingLeft: 2 }}>
+            Recomputes all team stats from match results. Run after correcting any score.
+          </p>
+        </div>
+      )}
 
       {/* League selector — shown if more than one league exists */}
       {leagues.length > 1 && (
