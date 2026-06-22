@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
+import { ThemeProvider, useTheme } from './context/ThemeContext'
 import { useNotifications } from './hooks/useNotifications'
 import Navbar from './components/Navbar'
 import UpdateBanner from './components/UpdateBanner'
@@ -34,15 +35,16 @@ function Splash() {
 
 const LOGO_BG = `${import.meta.env.BASE_URL}home-logo.jpg`
 
-export default function App() {
+function AppInner() {
   const { user, isAdmin, loading } = useAuth()
-  useNotifications()   // request permission + save FCM token after login
+  const { theme } = useTheme()
+  useNotifications()
   if (loading) return <Splash />
   const isAuthed = user || isAdmin
 
   return (
     <>
-      {/* Global logo watermark — visible on every page */}
+      {/* Global logo watermark */}
       <img
         src={LOGO_BG}
         alt=""
@@ -55,7 +57,7 @@ export default function App() {
           width: '75vw',
           maxWidth: 420,
           opacity: 0.08,
-          mixBlendMode: 'multiply',
+          mixBlendMode: theme === 'dark' ? 'screen' : 'multiply',
           pointerEvents: 'none',
           zIndex: 0,
           userSelect: 'none',
@@ -77,5 +79,13 @@ export default function App() {
       {isAuthed && <Navbar />}
       <UpdateBanner />
     </>
+  )
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppInner />
+    </ThemeProvider>
   )
 }
