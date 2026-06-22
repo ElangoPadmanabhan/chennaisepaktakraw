@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { useTheme } from '../context/ThemeContext'
 import ProfileSheet from './ProfileSheet'
 
 function SunIcon() {
@@ -25,9 +24,7 @@ function MoonIcon() {
 
 export default function TopBar() {
   const { user, isAdmin } = useAuth()
-  const { theme, toggleTheme } = useTheme()
   const [open, setOpen] = useState(false)
-  const isDark = theme === 'dark'
 
   return (
     <>
@@ -50,42 +47,20 @@ export default function TopBar() {
           Chennai ST League
         </p>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* Dark mode toggle */}
-          <button
-            onClick={toggleTheme}
-            aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '5px 10px', borderRadius: 20,
-              border: '1.5px solid var(--border)',
-              background: isDark ? 'var(--bg-elevated)' : 'var(--bg-card)',
-              color: isDark ? '#f0c040' : 'var(--text-2)',
-              cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: '0.65rem', fontWeight: 700,
-              transition: 'all 200ms ease',
-              minHeight: 32,
-            }}
-          >
-            {isDark ? <MoonIcon /> : <SunIcon />}
-            {isDark ? 'Dark' : 'Light'}
-          </button>
-
-          {/* Profile avatar button */}
-          <button
-            onClick={() => setOpen(true)}
-            aria-label="Open profile"
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              padding: 0, borderRadius: '50%',
-              transition: 'transform 120ms ease',
-            }}
-            onMouseDown={e => e.currentTarget.style.transform = 'scale(0.92)'}
-            onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
-          >
-            <Avatar user={user} isAdmin={isAdmin} size={38} />
-          </button>
-        </div>
+        {/* Profile avatar button */}
+        <button
+          onClick={() => setOpen(true)}
+          aria-label="Open profile"
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            padding: 0, borderRadius: '50%',
+            transition: 'transform 120ms ease',
+          }}
+          onMouseDown={e => e.currentTarget.style.transform = 'scale(0.92)'}
+          onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+        >
+          <Avatar user={user} isAdmin={isAdmin} size={38} />
+        </button>
       </div>
 
       <ProfileSheet open={open} onClose={() => setOpen(false)} />

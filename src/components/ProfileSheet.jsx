@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 import { Avatar } from './TopBar'
 import { useSupportedTeam } from '../hooks/useSupportedTeam'
 import { hardRefresh } from './UpdateBanner'
@@ -7,7 +8,9 @@ import { requestNotificationPermission } from '../hooks/useNotifications'
 
 export default function ProfileSheet({ open, onClose }) {
   const { user, isAdmin, adminLogout, userLogout } = useAuth()
+  const { theme, toggleTheme } = useTheme()
   const { supportedTeam } = useSupportedTeam()
+  const isDark = theme === 'dark'
   const [refreshing, setRefreshing]   = useState(false)
   const [notifState, setNotifState]   = useState(
     'Notification' in window ? Notification.permission : 'unsupported'
@@ -180,6 +183,45 @@ export default function ProfileSheet({ open, onClose }) {
               </div>
             </div>
           )}
+
+          {/* Dark mode toggle */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 14,
+            padding: '14px 24px',
+            borderBottom: '1px solid var(--border)',
+            cursor: 'pointer',
+          }} onClick={toggleTheme}>
+            <div style={{
+              width: 38, height: 38, borderRadius: 10,
+              background: isDark ? 'rgba(255,210,60,0.12)' : 'rgba(99,102,241,0.08)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '1.1rem', flexShrink: 0,
+            }}>{isDark ? '🌙' : '☀️'}</div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: '0.72rem', color: 'var(--text-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>
+                Appearance
+              </p>
+              <p style={{ fontWeight: 700, fontSize: '0.92rem' }}>
+                {isDark ? 'Dark Mode' : 'Light Mode'}
+              </p>
+            </div>
+            {/* Toggle pill */}
+            <div style={{
+              width: 44, height: 26, borderRadius: 13,
+              background: isDark ? 'var(--accent)' : 'var(--border)',
+              position: 'relative', flexShrink: 0,
+              transition: 'background 200ms ease',
+            }}>
+              <div style={{
+                position: 'absolute', top: 3,
+                left: isDark ? 21 : 3,
+                width: 20, height: 20, borderRadius: '50%',
+                background: '#fff',
+                transition: 'left 200ms ease',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+              }} />
+            </div>
+          </div>
 
           {/* Clear cache & refresh */}
           <div style={{
