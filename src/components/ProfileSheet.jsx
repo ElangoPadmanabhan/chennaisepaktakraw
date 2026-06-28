@@ -14,7 +14,7 @@ export default function ProfileSheet({ open, onClose }) {
   const [refreshing, setRefreshing]   = useState(false)
   const [notifState, setNotifState]   = useState(
     'Notification' in window ? Notification.permission : 'unsupported'
-  ) // 'default' | 'granted' | 'denied' | 'unsupported'
+  ) // 'default' | 'granted' | 'denied' | 'unsupported' | 'save_failed'
   const [enablingNotif, setEnablingNotif] = useState(false)
 
   const handleSignOut = async () => {
@@ -32,7 +32,7 @@ export default function ProfileSheet({ open, onClose }) {
     if (notifState === 'denied') return
     setEnablingNotif(true)
     const result = await requestNotificationPermission(user?.uid)
-    setNotifState(result === 'error' ? 'default' : result)
+    setNotifState(result === 'error' ? 'default' : result === 'token_save_failed' ? 'save_failed' : result)
     setEnablingNotif(false)
   }
 
@@ -154,30 +154,36 @@ export default function ProfileSheet({ open, onClose }) {
               display: 'flex', alignItems: 'center', gap: 14,
               padding: '14px 24px',
               borderBottom: '1px solid var(--border)',
-              cursor: notifState === 'denied' ? 'not-allowed' : 'pointer',
+              cursor: notifState === 'denied' || notifState === 'granted' ? 'default' : 'pointer',
               opacity: enablingNotif ? 0.5 : 1,
-            }} onClick={notifState !== 'granted' ? handleEnableNotifications : undefined}>
+            }} onClick={notifState !== 'granted' && notifState !== 'denied' ? handleEnableNotifications : undefined}>
               <div style={{
                 width: 38, height: 38, borderRadius: 10,
-                background: notifState === 'granted' ? 'rgba(22,163,74,0.08)' : 'rgba(255,85,0,0.08)',
+                background: notifState === 'granted' ? 'rgba(22,163,74,0.08)' : notifState === 'save_failed' ? 'rgba(245,158,11,0.08)' : 'rgba(255,85,0,0.08)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '1.1rem', flexShrink: 0,
               }}>
-                {notifState === 'granted' ? '🔔' : notifState === 'denied' ? '🔕' : '🔔'}
+                {notifState === 'granted' ? '🔔' : notifState === 'denied' ? '🔕' : notifState === 'save_failed' ? '⚠️' : '🔔'}
               </div>
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: '0.72rem', color: 'var(--text-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>
                   Match Alerts
                 </p>
-                <p style={{ fontWeight: 700, fontSize: '0.92rem', color: notifState === 'granted' ? 'var(--success)' : notifState === 'denied' ? 'var(--text-3)' : 'var(--text-1)' }}>
-                  {enablingNotif       ? 'Enabling…'
-                   : notifState === 'granted' ? '✓ Notifications On'
-                   : notifState === 'denied'  ? 'Blocked by browser'
+                <p style={{ fontWeight: 700, fontSize: '0.92rem', color: notifState === 'granted' ? 'var(--success)' : notifState === 'save_failed' ? '#b45309' : notifState === 'denied' ? 'var(--text-3)' : 'var(--text-1)' }}>
+                  {enablingNotif           ? 'Enabling…'
+                   : notifState === 'granted'    ? '✓ Notifications On'
+                   : notifState === 'save_failed' ? '⚠️ Setup incomplete'
+                   : notifState === 'denied'     ? 'Blocked by browser'
                    : 'Enable Notifications'}
                 </p>
                 {notifState === 'denied' && (
                   <p style={{ fontSize: '0.7rem', color: 'var(--text-3)', marginTop: 2 }}>
                     Allow in browser site settings
+                  </p>
+                )}
+                {notifState === 'save_failed' && (
+                  <p style={{ fontSize: '0.7rem', color: '#b45309', marginTop: 2 }}>
+                    Permission granted but save failed — tap to retry
                   </p>
                 )}
               </div>

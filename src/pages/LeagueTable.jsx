@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { collection, onSnapshot, getDocs, doc, updateDoc } from 'firebase/firestore'
+import { collection, onSnapshot } from 'firebase/firestore'
 import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { useLeagues } from '../context/LeaguesContext'
 import { useSupportedTeam } from '../hooks/useSupportedTeam'
 import { useToast } from '../hooks/useToast'
+import { useRecalcTable } from '../hooks/useRecalcTable'
 
 const POS_STYLE = {
   1: { color: '#b45309', bg: '#fef3c7', border: '#fde68a' },
@@ -27,6 +28,7 @@ export default function LeagueTable() {
   const [recalcBusy, setRecalcBusy]       = useState(false)
   const [recalcDone, setRecalcDone]       = useState(false)
   const { toast, showToast } = useToast()
+  const { recalc } = useRecalcTable()
 
   // Sync selectedLeague when leagues arrive or change
   useEffect(() => {
@@ -133,66 +135,12 @@ export default function LeagueTable() {
     setRecalcBusy(true)
     setRecalcDone(false)
     try {
-      const fixSnap = await getDocs(collection(db, 'leagues', selectedLeague.id, 'fixtures'))
-      const allFixtures = fixSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-      const zero = () => ({ p:0, w:0, l:0, pts:0, setsWon:0, setsLost:0, ptsFor:0, ptsAgainst:0 })
-      const statsMap = {}
-      teams.forEach(t => {
-        statsMap[t.id] = {}
-        ;(selectedLeague.events || []).forEach(ev => { statsMap[t.id][ev] = zero() })
-      })
-      allFixtures.filter(f => f.status === 'completed').forEach(f => {
-        const homeId = f.homeTeam?.id
-        const awayId = f.awayTeam?.id
-        const ev     = f.event
-        if (!homeId || !awayId || !ev) return
-        if (!statsMap[homeId]?.[ev]) { if (statsMap[homeId]) statsMap[homeId][ev] = zero() }
-        if (!statsMap[awayId]?.[ev]) { if (statsMap[awayId]) statsMap[awayId][ev] = zero() }
-        if (!statsMap[homeId] || !statsMap[awayId]) return
-        const allSets   = f.sets || []
-        const wonSets   = allSets.filter(s => s.winner)
-        const sH        = wonSets.filter(s => s.winner === 'home').length
-        const sA        = wonSets.filter(s => s.winner === 'away').length
-        const homeWon   = sH > sA
-        // Count points from ALL sets played, not just won sets
-        const totalHome = allSets.reduce((sum, s) => sum + (s.home || 0), 0)
-        const totalAway = allSets.reduce((sum, s) => sum + (s.away || 0), 0)
-        const addTo = (id, won, sw, sl, pf, pa) => {
-          statsMap[id][ev].p++
-          statsMap[id][ev].w          += won ? 1 : 0
-          statsMap[id][ev].l          += won ? 0 : 1
-          statsMap[id][ev].pts        += won ? 2 : 0
-          statsMap[id][ev].setsWon    += sw
-          statsMap[id][ev].setsLost   += sl
-          statsMap[id][ev].ptsFor     += pf
-          statsMap[id][ev].ptsAgainst += pa
-        }
-        addTo(homeId, homeWon,  sH, sA, totalHome, totalAway)
-        addTo(awayId, !homeWon, sA, sH, totalAway, totalHome)
-      })
-      try {
-        await Promise.all(
-          Object.entries(statsMap).map(([teamId, evStats]) => {
-            const upd = {}
-            Object.entries(evStats).forEach(([ev, s]) => {
-              upd[`eventStats.${ev}.p`]          = s.p
-              upd[`eventStats.${ev}.w`]          = s.w
-              upd[`eventStats.${ev}.l`]          = s.l
-              upd[`eventStats.${ev}.pts`]        = s.pts
-              upd[`eventStats.${ev}.setsWon`]    = s.setsWon
-              upd[`eventStats.${ev}.setsLost`]   = s.setsLost
-              upd[`eventStats.${ev}.ptsFor`]     = s.ptsFor
-              upd[`eventStats.${ev}.ptsAgainst`] = s.ptsAgainst
-            })
-            return updateDoc(doc(db, 'leagues', selectedLeague.id, 'teams', teamId), upd)
-          })
-        )
-        setRecalcDone(true)
-        setTimeout(() => setRecalcDone(false), 3000)
-      } catch (err) {
-        console.error('Recalc write failed:', err)
-        showToast('Recalculation failed. Some stats may be incomplete — try again.')
-      }
+      await recalc(selectedLeague.id)
+      setRecalcDone(true)
+      setTimeout(() => setRecalcDone(false), 3000)
+    } catch (err) {
+      console.error('Recalc failed:', err)
+      showToast('Recalculation failed. Some stats may be incomplete — try again.')
     } finally {
       setRecalcBusy(false)
     }

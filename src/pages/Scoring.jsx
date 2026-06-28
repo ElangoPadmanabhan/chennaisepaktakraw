@@ -6,6 +6,8 @@ import { useAuth } from '../context/AuthContext'
 import ViewerCount from '../components/ViewerCount'
 import { useMatchPresence } from '../hooks/useMatchPresence'
 import { useToast } from '../hooks/useToast'
+import { useRecalcTable } from '../hooks/useRecalcTable'
+import { usePendingWrites } from '../hooks/usePendingWrites'
 
 // ── Game rules ────────────────────────────────────────────
 const MAX_SETS    = 3
@@ -66,6 +68,8 @@ export default function Scoring() {
   const completingRef = useRef(false)   // prevents double-tap from running stats twice
   const [timeoutState, setTimeoutState] = useState(null)
   const { toast, showToast } = useToast()
+  const { recalc } = useRecalcTable()
+  const { pending: syncPending, checkPending } = usePendingWrites()
   const [liveUrl, setLiveUrl]         = useState('')
   // lineup picker (before start)
   const [homeStarting, setHomeStarting] = useState([]) // playerIds selected as starting
@@ -129,6 +133,7 @@ export default function Scoring() {
     setBusy(true)
     try {
       await updateDoc(doc(db, 'leagues', leagueId, 'fixtures', fixtureId), updates)
+      checkPending()
     } catch (err) {
       console.error('Fixture save failed:', err)
       showToast('Save failed. Check your connection and try again.')
@@ -219,6 +224,8 @@ export default function Scoring() {
           await updateDoc(doc(db, 'leagues', leagueId, 'teams', fixture.homeTeam.id), homeStats)
           // Update away team stats
           await updateDoc(doc(db, 'leagues', leagueId, 'teams', fixture.awayTeam.id), awayStats)
+          // Auto-recalculate full league table from fixture data to ensure accuracy
+          await recalc(leagueId)
           // Check if ALL fixtures in league are now completed → auto-complete league
           const allFixSnap = await getDocs(collection(db, 'leagues', leagueId, 'fixtures'))
           const allDone = allFixSnap.docs.every(d => {
@@ -521,7 +528,7 @@ export default function Scoring() {
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-2)', padding: '4px 0', flexShrink: 0 }}>
+        <button aria-label="Go back" onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-2)', padding: '4px 0', flexShrink: 0 }}>
           <BackIcon />
         </button>
         <div style={{ flex: 1 }}>
@@ -531,6 +538,11 @@ export default function Scoring() {
           <h1 className="page-title" style={{ fontSize: '1.15rem' }}>Live Score</h1>
         </div>
         <ViewerCount fixtureId={fixtureId} />
+        {syncPending && (
+          <span style={{ fontSize: '0.7rem', background: '#f59e0b', color: '#fff', borderRadius: 999, padding: '2px 8px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+            Syncing…
+          </span>
+        )}
         {isLive && !setWon && <span className="badge badge-live"><span className="live-dot" />Live</span>}
         {isCompleted && <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: '0.65rem', fontWeight: 700, background: 'rgba(107,114,128,0.1)', color: '#6b7280', border: '1px solid rgba(107,114,128,0.2)' }}>Full Time</span>}
       </div>
@@ -1034,6 +1046,7 @@ function TeamActionPanel({ teamName, logoUrl, side, timeoutUsed, subs, reentries
           <p style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 5 }}>Timeout</p>
           {isAdmin ? (
             <button
+              aria-label={timeoutUsed ? `Timeout used for ${teamName}` : `Call timeout for ${teamName}`}
               onClick={!timeoutUsed ? onTimeout : undefined}
               disabled={busy || timeoutUsed}
               style={{
@@ -1063,6 +1076,7 @@ function TeamActionPanel({ teamName, logoUrl, side, timeoutUsed, subs, reentries
           </div>
           {isAdmin ? (
             <button
+              aria-label={!canSub ? `No substitutions left for ${teamName}` : `Use substitution for ${teamName}`}
               onClick={canSub ? onSub : undefined}
               disabled={busy || !canSub}
               style={{
@@ -1096,6 +1110,7 @@ function TeamActionPanel({ teamName, logoUrl, side, timeoutUsed, subs, reentries
           </div>
           {isAdmin ? (
             <button
+              aria-label={!canReentry ? `Re-entry unavailable for ${teamName}` : `Use re-entry for ${teamName}`}
               onClick={canReentry ? onReentry : undefined}
               disabled={busy || !canReentry}
               style={{
@@ -1184,12 +1199,12 @@ function AdminControl({ label, score, leading, onAdd, onSub, busy, isServing }) 
           </div>
         )}
       </div>
-      <button className="btn btn-primary" onClick={onAdd} disabled={busy}
+      <button aria-label={`Add point for ${label}`} className="btn btn-primary" onClick={onAdd} disabled={busy}
         style={{ width: 58, height: 58, borderRadius: '50%', fontSize: '1.8rem', padding: 0 }}>+</button>
-      <span style={{ fontSize: '4rem', fontWeight: 900, lineHeight: 1, color: leading ? 'var(--text-1)' : 'var(--text-3)', letterSpacing: '-3px', fontVariantNumeric: 'tabular-nums', transition: 'color 200ms ease' }}>
+      <span aria-live="polite" aria-label={`${label} score: ${score}`} style={{ fontSize: '4rem', fontWeight: 900, lineHeight: 1, color: leading ? 'var(--text-1)' : 'var(--text-3)', letterSpacing: '-3px', fontVariantNumeric: 'tabular-nums', transition: 'color 200ms ease' }}>
         {score}
       </span>
-      <button className="btn btn-secondary" onClick={onSub} disabled={busy || score === 0}
+      <button aria-label={`Subtract point for ${label}`} className="btn btn-secondary" onClick={onSub} disabled={busy || score === 0}
         style={{ width: 44, height: 44, borderRadius: '50%', fontSize: '1.4rem', padding: 0 }}>−</button>
     </div>
   )

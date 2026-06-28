@@ -7,17 +7,39 @@ import { useAuth } from '../context/AuthContext'
 const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY
 const BASE      = import.meta.env.BASE_URL || '/'
 
-// Shared messaging instance
-let _messaging = null
+// ── Singleton messaging instance (promise-based to prevent race condition) ──
+let _messagingPromise = null
 async function getMsg() {
-  if (_messaging) return _messaging
+  if (_messagingPromise) return _messagingPromise
   const supported = await isSupported()
   if (!supported) return null
-  _messaging = getMessaging(app)
-  return _messaging
+  _messagingPromise = Promise.resolve(getMessaging(app))
+  return _messagingPromise
 }
 
-// ── Called on app load: registers SW + onMessage if already permitted ──
+// ── Single module-level foreground handler — shared across both setup paths ──
+// This ensures only ONE onMessage handler is ever active at a time, preventing
+// the double-notification bug where requestNotificationPermission + useNotifications
+// both registered handlers that stacked up.
+let _unsubForeground = null
+
+function registerForegroundHandler(messaging) {
+  if (_unsubForeground) _unsubForeground()   // tear down any existing handler first
+  _unsubForeground = onMessage(messaging, payload => {
+    const title = payload.notification?.title || '🏐 Match Live!'
+    const body  = payload.notification?.body  || ''
+    const url   = payload.data?.url
+    const n = new Notification(title, {
+      body,
+      icon: `${BASE}icons/icon-192.png`,
+      tag:  'match-live',  // tag dedupes OS-level — only one notification shown at a time
+    })
+    if (url) n.onclick = () => { window.focus(); window.location.href = url }
+  })
+  return _unsubForeground
+}
+
+// ── Called on app load: auto-setup if permission already granted ──
 export function useNotifications() {
   const { user } = useAuth()
   const unsubRef = useRef(null)
@@ -25,7 +47,12 @@ export function useNotifications() {
   useEffect(() => {
     if (!user) return
     if (!('Notification' in window) || !('serviceWorker' in navigator)) return
-    if (Notification.permission !== 'granted') return  // only auto-setup if already allowed
+    if (Notification.permission !== 'granted') return
+
+    if (!VAPID_KEY) {
+      console.warn('[notifications] VITE_FIREBASE_VAPID_KEY is not set — push notifications disabled')
+      return
+    }
 
     const setup = async () => {
       try {
@@ -42,31 +69,27 @@ export function useNotifications() {
         })
 
         if (token) {
-          await setDoc(doc(db, 'userTokens', user.uid), {
-            token, uid: user.uid, updatedAt: serverTimestamp(),
-          })
+          try {
+            await setDoc(doc(db, 'userTokens', user.uid), {
+              token, uid: user.uid, updatedAt: serverTimestamp(),
+            })
+          } catch (saveErr) {
+            console.warn('[notifications] Failed to save token to Firestore — user will not receive push notifications:', saveErr)
+          }
         }
 
-        // Foreground + background: fire native Notification for both paths
-        if (unsubRef.current) unsubRef.current()
-        unsubRef.current = onMessage(messaging, payload => {
-          const title = payload.notification?.title || '🏐 Match Live!'
-          const body  = payload.notification?.body  || ''
-          const url   = payload.data?.url
-          const n = new Notification(title, {
-            body,
-            icon: `${BASE}icons/icon-192.png`,
-            tag:  'match-live',
-          })
-          if (url) n.onclick = () => { window.focus(); window.location.href = url }
-        })
+        unsubRef.current = registerForegroundHandler(messaging)
       } catch (err) {
-        console.warn('[notifications]', err)
+        console.warn('[notifications] Setup failed:', err)
       }
     }
 
     setup()
-    return () => { if (unsubRef.current) { unsubRef.current(); unsubRef.current = null } }
+    return () => {
+      if (unsubRef.current) { unsubRef.current(); unsubRef.current = null }
+      // Also clear the module-level handler so it doesn't fire after logout
+      if (_unsubForeground) { _unsubForeground(); _unsubForeground = null }
+    }
   }, [user?.uid])
 }
 
@@ -74,6 +97,11 @@ export function useNotifications() {
 export async function requestNotificationPermission(uid) {
   try {
     if (!('Notification' in window) || !('serviceWorker' in navigator)) return 'unsupported'
+
+    if (!VAPID_KEY) {
+      console.warn('[notifications] VITE_FIREBASE_VAPID_KEY is not set')
+      return 'error'
+    }
 
     const messaging = await getMsg()
     if (!messaging) return 'unsupported'
@@ -91,67 +119,23 @@ export async function requestNotificationPermission(uid) {
     })
 
     if (token && uid) {
-      await setDoc(doc(db, 'userTokens', uid), {
-        token, uid, updatedAt: serverTimestamp(),
-      })
+      try {
+        await setDoc(doc(db, 'userTokens', uid), {
+          token, uid, updatedAt: serverTimestamp(),
+        })
+      } catch (saveErr) {
+        console.warn('[notifications] Token save failed — push notifications may not work:', saveErr)
+        // Return a distinct status so the UI can warn the user
+        return 'token_save_failed'
+      }
     }
 
-    // Register foreground handler
-    onMessage(messaging, payload => {
-      const title = payload.notification?.title || '🏐 Match Live!'
-      const body  = payload.notification?.body  || ''
-      const url   = payload.data?.url
-      const n = new Notification(title, {
-        body,
-        icon: `${BASE}icons/icon-192.png`,
-        tag:  'match-live',
-      })
-      if (url) n.onclick = () => { window.focus(); window.location.href = url }
-    })
+    // Register foreground handler via shared function — replaces any existing one
+    registerForegroundHandler(messaging)
 
     return 'granted'
   } catch (err) {
-    console.warn('[notifications]', err)
+    console.warn('[notifications] Permission request failed:', err)
     return 'error'
   }
-}
-
-// ── In-app banner (foreground only) ──────────────────────────────
-function showInAppBanner(title, body, url) {
-  const existing = document.getElementById('match-live-banner')
-  if (existing) existing.remove()
-
-  const banner = document.createElement('div')
-  banner.id = 'match-live-banner'
-  Object.assign(banner.style, {
-    position: 'fixed', top: '16px', left: '50%',
-    transform: 'translateX(-50%)', zIndex: '9999',
-    background: '#111218', color: '#fff', borderRadius: '14px',
-    padding: '12px 18px', display: 'flex', alignItems: 'center', gap: '12px',
-    boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
-    maxWidth: '420px', width: 'calc(100vw - 32px)',
-    cursor: url ? 'pointer' : 'default',
-    animation: 'slideDown 280ms cubic-bezier(0.32,0.72,0,1)',
-    border: '1px solid rgba(255,255,255,0.1)',
-  })
-
-  banner.innerHTML = `
-    <span style="font-size:1.3rem;flex-shrink:0">🏐</span>
-    <div style="flex:1;min-width:0">
-      <p style="font-weight:800;font-size:0.88rem;margin:0 0 2px">${title}</p>
-      ${body ? `<p style="font-size:0.75rem;opacity:0.7;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${body}</p>` : ''}
-    </div>
-    <button id="banner-close" style="background:none;border:none;color:#fff;opacity:0.6;cursor:pointer;font-size:1.1rem;padding:0;flex-shrink:0">✕</button>
-  `
-
-  if (url) banner.onclick = (e) => {
-    if (e.target.id === 'banner-close') return
-    window.location.href = url
-  }
-  banner.querySelector('#banner-close').onclick = (e) => {
-    e.stopPropagation(); banner.remove()
-  }
-
-  document.body.appendChild(banner)
-  setTimeout(() => { if (banner.isConnected) banner.remove() }, 6000)
 }
