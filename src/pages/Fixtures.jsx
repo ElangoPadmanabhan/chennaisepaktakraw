@@ -5,6 +5,7 @@ import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { useLeagues } from '../context/LeaguesContext'
 import { useSupportedTeam } from '../hooks/useSupportedTeam'
+import { useToast } from '../hooks/useToast'
 
 const EVENT_ICON = { Regu: '👟', Quad: '🏐' }
 
@@ -30,6 +31,7 @@ export default function Fixtures() {
   const [rescheduleDate, setRescheduleDate]       = useState('')
   const [rescheduleSaving, setRescheduleSaving]   = useState(false)
   const [powByDate, setPowByDate]                 = useState({})
+  const { toast, showToast } = useToast()
 
   // Sync selectedLeague when leagues arrive or change
   useEffect(() => {
@@ -78,7 +80,12 @@ export default function Fixtures() {
     try {
       await updateDoc(doc(db, 'leagues', selectedLeague.id, 'fixtures', rescheduleFixture.id), { date: rescheduleDate })
       setRescheduleFixture(null)
-    } finally { setRescheduleSaving(false) }
+    } catch (err) {
+      console.error('Reschedule failed:', err)
+      showToast('Failed to reschedule. Check your connection and try again.')
+    } finally {
+      setRescheduleSaving(false)
+    }
   }
 
   if (loading) return (
@@ -119,6 +126,20 @@ export default function Fixtures() {
 
   return (
     <div className="page">
+
+      {/* Toast notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+          background: toast.type === 'error' ? '#dc2626' : '#16a34a',
+          color: '#fff', padding: '10px 18px', borderRadius: 10,
+          fontSize: '0.82rem', fontWeight: 600, zIndex: 9999,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.25)', maxWidth: 320, textAlign: 'center',
+          pointerEvents: 'none',
+        }}>
+          {toast.message}
+        </div>
+      )}
 
       {/* Header */}
       <div className="page-header" style={{ marginBottom: 14 }}>

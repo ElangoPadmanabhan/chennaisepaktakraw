@@ -4,6 +4,7 @@ import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { useLeagues } from '../context/LeaguesContext'
 import { useSupportedTeam } from '../hooks/useSupportedTeam'
+import { useToast } from '../hooks/useToast'
 
 const POS_STYLE = {
   1: { color: '#b45309', bg: '#fef3c7', border: '#fde68a' },
@@ -25,6 +26,7 @@ export default function LeagueTable() {
   const [supportCounts, setSupportCounts] = useState({}) // { teamId: count }
   const [recalcBusy, setRecalcBusy]       = useState(false)
   const [recalcDone, setRecalcDone]       = useState(false)
+  const { toast, showToast } = useToast()
 
   // Sync selectedLeague when leagues arrive or change
   useEffect(() => {
@@ -147,12 +149,14 @@ export default function LeagueTable() {
         if (!statsMap[homeId]?.[ev]) { if (statsMap[homeId]) statsMap[homeId][ev] = zero() }
         if (!statsMap[awayId]?.[ev]) { if (statsMap[awayId]) statsMap[awayId][ev] = zero() }
         if (!statsMap[homeId] || !statsMap[awayId]) return
-        const sets = (f.sets || []).filter(s => s.winner)
-        const sH = sets.filter(s => s.winner === 'home').length
-        const sA = sets.filter(s => s.winner === 'away').length
+        const allSets   = f.sets || []
+        const wonSets   = allSets.filter(s => s.winner)
+        const sH        = wonSets.filter(s => s.winner === 'home').length
+        const sA        = wonSets.filter(s => s.winner === 'away').length
         const homeWon   = sH > sA
-        const totalHome = sets.reduce((sum, s) => sum + (s.home || 0), 0)
-        const totalAway = sets.reduce((sum, s) => sum + (s.away || 0), 0)
+        // Count points from ALL sets played, not just won sets
+        const totalHome = allSets.reduce((sum, s) => sum + (s.home || 0), 0)
+        const totalAway = allSets.reduce((sum, s) => sum + (s.away || 0), 0)
         const addTo = (id, won, sw, sl, pf, pa) => {
           statsMap[id][ev].p++
           statsMap[id][ev].w          += won ? 1 : 0
@@ -166,24 +170,29 @@ export default function LeagueTable() {
         addTo(homeId, homeWon,  sH, sA, totalHome, totalAway)
         addTo(awayId, !homeWon, sA, sH, totalAway, totalHome)
       })
-      await Promise.all(
-        Object.entries(statsMap).map(([teamId, evStats]) => {
-          const upd = {}
-          Object.entries(evStats).forEach(([ev, s]) => {
-            upd[`eventStats.${ev}.p`]          = s.p
-            upd[`eventStats.${ev}.w`]          = s.w
-            upd[`eventStats.${ev}.l`]          = s.l
-            upd[`eventStats.${ev}.pts`]        = s.pts
-            upd[`eventStats.${ev}.setsWon`]    = s.setsWon
-            upd[`eventStats.${ev}.setsLost`]   = s.setsLost
-            upd[`eventStats.${ev}.ptsFor`]     = s.ptsFor
-            upd[`eventStats.${ev}.ptsAgainst`] = s.ptsAgainst
+      try {
+        await Promise.all(
+          Object.entries(statsMap).map(([teamId, evStats]) => {
+            const upd = {}
+            Object.entries(evStats).forEach(([ev, s]) => {
+              upd[`eventStats.${ev}.p`]          = s.p
+              upd[`eventStats.${ev}.w`]          = s.w
+              upd[`eventStats.${ev}.l`]          = s.l
+              upd[`eventStats.${ev}.pts`]        = s.pts
+              upd[`eventStats.${ev}.setsWon`]    = s.setsWon
+              upd[`eventStats.${ev}.setsLost`]   = s.setsLost
+              upd[`eventStats.${ev}.ptsFor`]     = s.ptsFor
+              upd[`eventStats.${ev}.ptsAgainst`] = s.ptsAgainst
+            })
+            return updateDoc(doc(db, 'leagues', selectedLeague.id, 'teams', teamId), upd)
           })
-          return updateDoc(doc(db, 'leagues', selectedLeague.id, 'teams', teamId), upd)
-        })
-      )
-      setRecalcDone(true)
-      setTimeout(() => setRecalcDone(false), 3000)
+        )
+        setRecalcDone(true)
+        setTimeout(() => setRecalcDone(false), 3000)
+      } catch (err) {
+        console.error('Recalc write failed:', err)
+        showToast('Recalculation failed. Some stats may be incomplete — try again.')
+      }
     } finally {
       setRecalcBusy(false)
     }
@@ -242,6 +251,20 @@ export default function LeagueTable() {
 
   return (
     <div className="page">
+
+      {/* Toast notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+          background: toast.type === 'error' ? '#dc2626' : '#16a34a',
+          color: '#fff', padding: '10px 18px', borderRadius: 10,
+          fontSize: '0.82rem', fontWeight: 600, zIndex: 9999,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.25)', maxWidth: 320, textAlign: 'center',
+          pointerEvents: 'none',
+        }}>
+          {toast.message}
+        </div>
+      )}
 
       {/* Header */}
       <div className="page-header" style={{ marginBottom: 14 }}>

@@ -5,6 +5,7 @@ import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import ViewerCount from '../components/ViewerCount'
 import { useMatchPresence } from '../hooks/useMatchPresence'
+import { useToast } from '../hooks/useToast'
 
 // ── Game rules ────────────────────────────────────────────
 const MAX_SETS    = 3
@@ -64,6 +65,7 @@ export default function Scoring() {
   const [confirmPending, setConfirmPending] = useState(null) // { side, winnerName, score }
   const completingRef = useRef(false)   // prevents double-tap from running stats twice
   const [timeoutState, setTimeoutState] = useState(null)
+  const { toast, showToast } = useToast()
   const [liveUrl, setLiveUrl]         = useState('')
   // lineup picker (before start)
   const [homeStarting, setHomeStarting] = useState([]) // playerIds selected as starting
@@ -125,8 +127,15 @@ export default function Scoring() {
   // ── Firestore save ────────────────────────────────────
   const save = async (updates) => {
     setBusy(true)
-    try { await updateDoc(doc(db, 'leagues', leagueId, 'fixtures', fixtureId), updates) }
-    finally { setBusy(false) }
+    try {
+      await updateDoc(doc(db, 'leagues', leagueId, 'fixtures', fixtureId), updates)
+    } catch (err) {
+      console.error('Fixture save failed:', err)
+      showToast('Save failed. Check your connection and try again.')
+      throw err
+    } finally {
+      setBusy(false)
+    }
   }
 
   // ── Score actions ─────────────────────────────────────
@@ -162,64 +171,68 @@ export default function Scoring() {
     }
 
     const matchOver = sH >= SETS_TO_WIN || sA >= SETS_TO_WIN
-    // Guard: only update stats once. completingRef is set synchronously so a
-    // second rapid tap before onSnapshot updates fixture.status is also blocked.
-    if (matchOver && fixture.status !== 'completed' && !completingRef.current) {
-      completingRef.current = true
+
+    if (matchOver && fixture.status !== 'completed') {
+      // Always mark completed — even on retry after a failed save.
+      // This prevents the "3rd set at 0-0" bug where a save failure + retry
+      // skips the completed status because completingRef was already set.
       updates.status        = 'completed'
       updates.homeScore     = sH
       updates.awayScore     = sA
       updates.completedDate = new Date().toISOString().split('T')[0]
 
-      // Total points scored across all sets
-      const totalHome = sets.reduce((sum, s) => sum + (s.home || 0), 0)
-      const totalAway = sets.reduce((sum, s) => sum + (s.away || 0), 0)
-      const homeWon   = sH >= SETS_TO_WIN
-      const ev        = fixture.event // 'Regu' | 'Quad' | etc.
+      // Guard stats writes only — prevents double-increment on rapid tap or retry
+      if (!completingRef.current) {
+        completingRef.current = true
 
-      // Helper: build event-namespaced stat update
-      const homeStats = ev ? {
-        [`eventStats.${ev}.p`]:          increment(1),
-        [`eventStats.${ev}.w`]:          increment(homeWon ? 1 : 0),
-        [`eventStats.${ev}.l`]:          increment(homeWon ? 0 : 1),
-        [`eventStats.${ev}.pts`]:        increment(homeWon ? 2 : 0),
-        [`eventStats.${ev}.setsWon`]:    increment(sH),
-        [`eventStats.${ev}.setsLost`]:   increment(sA),
-        [`eventStats.${ev}.ptsFor`]:     increment(totalHome),
-        [`eventStats.${ev}.ptsAgainst`]: increment(totalAway),
-      } : {}
+        // Total points scored across all sets
+        const totalHome = sets.reduce((sum, s) => sum + (s.home || 0), 0)
+        const totalAway = sets.reduce((sum, s) => sum + (s.away || 0), 0)
+        const homeWon   = sH >= SETS_TO_WIN
+        const ev        = fixture.event // 'Regu' | 'Quad' | etc.
 
-      const awayStats = ev ? {
-        [`eventStats.${ev}.p`]:          increment(1),
-        [`eventStats.${ev}.w`]:          increment(homeWon ? 0 : 1),
-        [`eventStats.${ev}.l`]:          increment(homeWon ? 1 : 0),
-        [`eventStats.${ev}.pts`]:        increment(homeWon ? 0 : 2),
-        [`eventStats.${ev}.setsWon`]:    increment(sA),
-        [`eventStats.${ev}.setsLost`]:   increment(sH),
-        [`eventStats.${ev}.ptsFor`]:     increment(totalAway),
-        [`eventStats.${ev}.ptsAgainst`]: increment(totalHome),
-      } : {}
+        // Helper: build event-namespaced stat update
+        const homeStats = ev ? {
+          [`eventStats.${ev}.p`]:          increment(1),
+          [`eventStats.${ev}.w`]:          increment(homeWon ? 1 : 0),
+          [`eventStats.${ev}.l`]:          increment(homeWon ? 0 : 1),
+          [`eventStats.${ev}.pts`]:        increment(homeWon ? 2 : 0),
+          [`eventStats.${ev}.setsWon`]:    increment(sH),
+          [`eventStats.${ev}.setsLost`]:   increment(sA),
+          [`eventStats.${ev}.ptsFor`]:     increment(totalHome),
+          [`eventStats.${ev}.ptsAgainst`]: increment(totalAway),
+        } : {}
 
-      // Update home team stats
-      await updateDoc(
-        doc(db, 'leagues', leagueId, 'teams', fixture.homeTeam.id),
-        homeStats
-      )
+        const awayStats = ev ? {
+          [`eventStats.${ev}.p`]:          increment(1),
+          [`eventStats.${ev}.w`]:          increment(homeWon ? 0 : 1),
+          [`eventStats.${ev}.l`]:          increment(homeWon ? 1 : 0),
+          [`eventStats.${ev}.pts`]:        increment(homeWon ? 0 : 2),
+          [`eventStats.${ev}.setsWon`]:    increment(sA),
+          [`eventStats.${ev}.setsLost`]:   increment(sH),
+          [`eventStats.${ev}.ptsFor`]:     increment(totalAway),
+          [`eventStats.${ev}.ptsAgainst`]: increment(totalHome),
+        } : {}
 
-      // Update away team stats
-      await updateDoc(
-        doc(db, 'leagues', leagueId, 'teams', fixture.awayTeam.id),
-        awayStats
-      )
-
-      // Check if ALL fixtures in league are now completed → auto-complete league
-      const allFixSnap = await getDocs(collection(db, 'leagues', leagueId, 'fixtures'))
-      const allDone = allFixSnap.docs.every(d => {
-        const data = d.data()
-        return d.id === fixtureId ? true : data.status === 'completed'
-      })
-      if (allDone) {
-        await updateDoc(doc(db, 'leagues', leagueId), { status: 'completed' })
+        try {
+          // Update home team stats
+          await updateDoc(doc(db, 'leagues', leagueId, 'teams', fixture.homeTeam.id), homeStats)
+          // Update away team stats
+          await updateDoc(doc(db, 'leagues', leagueId, 'teams', fixture.awayTeam.id), awayStats)
+          // Check if ALL fixtures in league are now completed → auto-complete league
+          const allFixSnap = await getDocs(collection(db, 'leagues', leagueId, 'fixtures'))
+          const allDone = allFixSnap.docs.every(d => {
+            const data = d.data()
+            return d.id === fixtureId ? true : data.status === 'completed'
+          })
+          if (allDone) {
+            await updateDoc(doc(db, 'leagues', leagueId), { status: 'completed' })
+          }
+        } catch (err) {
+          completingRef.current = false   // allow full retry on next attempt
+          console.error('Stats write failed:', err)
+          showToast('Stats update failed. Use Recalculate in League Table to fix.')
+        }
       }
     }
 
@@ -237,7 +250,11 @@ export default function Scoring() {
     if (fixture.servingTeam) {
       updates.servingTeam = fixture.servingTeam === 'home' ? 'away' : 'home'
     }
-    await save(updates)
+    try {
+      await save(updates)
+    } catch {
+      showToast('Failed to subtract point. Try again.')
+    }
   }
 
   const nextSet = async () => {
@@ -250,7 +267,11 @@ export default function Scoring() {
     if (fixture.servingTeam) {
       updates.servingTeam = fixture.servingTeam === 'home' ? 'away' : 'home'
     }
-    await save(updates)
+    try {
+      await save(updates)
+    } catch {
+      showToast('Failed to start next set. Try again.')
+    }
   }
 
   const editSetScore = async (setIndex, side, delta) => {
@@ -268,7 +289,11 @@ export default function Scoring() {
       updates.homeScore = sH
       updates.awayScore = sA
     }
-    await save(updates)
+    try {
+      await save(updates)
+    } catch {
+      showToast('Failed to update score. Try again.')
+    }
   }
 
   const removeLastSet = async () => {
@@ -287,7 +312,11 @@ export default function Scoring() {
       updates.homeScore = null
       updates.awayScore = null
     }
-    await save(updates)
+    try {
+      await save(updates)
+    } catch {
+      showToast('Failed to remove set. Try again.')
+    }
   }
 
   const buildLineup = (allPlayers, startingIds) =>
@@ -314,13 +343,16 @@ export default function Scoring() {
         ...(tossData.coinResult ? { callerSide: tossData.callerSide, callerChoice: tossData.callerChoice, coinResult: tossData.coinResult } : {}),
       }
     }
-    await save(updates)
-
-    // Auto-activate league when first match goes live
-    const leagueRef  = doc(db, 'leagues', leagueId)
-    const leagueSnap = await getDoc(leagueRef)
-    if (leagueSnap.exists() && leagueSnap.data().status === 'upcoming') {
-      await updateDoc(leagueRef, { status: 'active' })
+    try {
+      await save(updates)
+      // Auto-activate league when first match goes live
+      const leagueRef  = doc(db, 'leagues', leagueId)
+      const leagueSnap = await getDoc(leagueRef)
+      if (leagueSnap.exists() && leagueSnap.data().status === 'upcoming') {
+        await updateDoc(leagueRef, { status: 'active' })
+      }
+    } catch {
+      showToast('Failed to start match. Try again.')
     }
   }
 
@@ -335,17 +367,21 @@ export default function Scoring() {
       return p
     })}
     const teamName = side === 'home' ? fixture.homeTeam?.name : fixture.awayTeam?.name
-    await save({
-      lineup: updated,
-      subAlert: {
-        type,
-        teamName,
-        outName: outPlayer?.name || '',
-        inName:  inPlayer?.name  || '',
-        at: Date.now(),
-      }
-    })
-    setSubModal(null)
+    try {
+      await save({
+        lineup: updated,
+        subAlert: {
+          type,
+          teamName,
+          outName: outPlayer?.name || '',
+          inName:  inPlayer?.name  || '',
+          at: Date.now(),
+        }
+      })
+      setSubModal(null)
+    } catch {
+      showToast('Failed to apply substitution. Try again.')
+    }
   }
 
   // ── Timeout ───────────────────────────────────────────
@@ -353,8 +389,12 @@ export default function Scoring() {
     const sets = fixture.sets.map((s, i) =>
       i === fixture.currentSet ? { ...s, [`${side}Timeout`]: true } : s
     )
-    await save({ sets, timeoutActive: { side, startedAt: Date.now() } })
-    setTimeoutState({ side, remaining: TIMEOUT_SEC })
+    try {
+      await save({ sets, timeoutActive: { side, startedAt: Date.now() } })
+      setTimeoutState({ side, remaining: TIMEOUT_SEC })
+    } catch {
+      showToast('Failed to record timeout. Try again.')
+    }
   }
 
   // ── Sub / Re-entry ────────────────────────────────────
@@ -363,7 +403,11 @@ export default function Scoring() {
       if (i !== fixture.currentSet) return s
       return { ...s, [`${side}Subs`]: (s[`${side}Subs`] || 0) + 1 }
     })
-    await save({ sets })
+    try {
+      await save({ sets })
+    } catch {
+      showToast('Failed to record substitution. Try again.')
+    }
   }
 
   const useReentry = async (side) => {
@@ -371,7 +415,11 @@ export default function Scoring() {
       if (i !== fixture.currentSet) return s
       return { ...s, [`${side}Reentries`]: (s[`${side}Reentries`] || 0) + 1 }
     })
-    await save({ sets })
+    try {
+      await save({ sets })
+    } catch {
+      showToast('Failed to record re-entry. Try again.')
+    }
   }
 
   // ── Guards ────────────────────────────────────────────
@@ -433,6 +481,20 @@ export default function Scoring() {
 
   return (
     <div className="page" style={{ paddingBottom: 100 }}>
+
+      {/* Toast notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+          background: toast.type === 'error' ? '#dc2626' : '#16a34a',
+          color: '#fff', padding: '10px 18px', borderRadius: 10,
+          fontSize: '0.82rem', fontWeight: 600, zIndex: 9999,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.25)', maxWidth: 320, textAlign: 'center',
+          pointerEvents: 'none',
+        }}>
+          {toast.message}
+        </div>
+      )}
 
       {/* Timeout overlay — admin full screen */}
       {timeoutState && isAdmin && (

@@ -19,14 +19,9 @@ export function useSupportedTeam() {
 
   const supportTeam = async (teamId) => {
     if (!user) return
-    if (supportedTeam === teamId) {
-      // Toggle off
-      await deleteDoc(doc(db, 'userTeams', user.uid))
-      setSupportedTeam(null)
-    } else {
-      await setDoc(doc(db, 'userTeams', user.uid), { teamId, updatedAt: new Date() })
-      setSupportedTeam(teamId)
-    }
+    // Always switch to the new team — only 1 heart allowed at a time
+    await setDoc(doc(db, 'userTeams', user.uid), { teamId, updatedAt: new Date() })
+    setSupportedTeam(teamId)
   }
 
   return { supportedTeam, supportTeam, loading }

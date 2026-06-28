@@ -6,6 +6,7 @@ import {
   updateDoc, deleteDoc, getDocs, serverTimestamp,
 } from 'firebase/firestore'
 import { db } from '../firebase'
+import { useToast } from '../hooks/useToast'
 
 const STATUS_STYLES = {
   active:    { bg: 'rgba(34,197,94,0.1)',  color: '#16a34a', border: 'rgba(34,197,94,0.25)',  label: 'Active'    },
@@ -18,8 +19,10 @@ export default function ManageLeagues() {
   const [leagues, setLeagues]     = useState([])
   const [showForm, setShowForm]   = useState(false)
   const [saving, setSaving]       = useState(false)
+  const [deleting, setDeleting]   = useState(false)
   const [form, setForm]           = useState({ name: '', year: new Date().getFullYear().toString(), startDate: '', endDate: '', status: 'upcoming', events: [] })
   const [errors, setErrors]       = useState({})
+  const { toast, showToast } = useToast()
 
   // Live leagues from Firestore
   useEffect(() => {
@@ -73,24 +76,52 @@ export default function ManageLeagues() {
   const setActive = async (leagueId) => {
     const l = leagues.find(x => x.id === leagueId)
     if (!l) return
-    await updateDoc(doc(db, 'leagues', leagueId), {
-      status: l.status === 'active' ? 'upcoming' : 'active',
-    })
+    try {
+      await updateDoc(doc(db, 'leagues', leagueId), {
+        status: l.status === 'active' ? 'upcoming' : 'active',
+      })
+    } catch (err) {
+      console.error('Status update failed:', err)
+      showToast('Failed to update league status. Try again.')
+    }
   }
 
   const deleteLeague = async (leagueId) => {
-    // Delete all players inside each team, then teams, then the league
-    const teamsSnap = await getDocs(collection(db, 'leagues', leagueId, 'teams'))
-    for (const teamDoc of teamsSnap.docs) {
-      const playersSnap = await getDocs(collection(db, 'leagues', leagueId, 'teams', teamDoc.id, 'players'))
-      for (const playerDoc of playersSnap.docs) await deleteDoc(playerDoc.ref)
-      await deleteDoc(teamDoc.ref)
+    if (deleting) return
+    setDeleting(true)
+    try {
+      // Delete all players inside each team, then teams, then the league
+      const teamsSnap = await getDocs(collection(db, 'leagues', leagueId, 'teams'))
+      for (const teamDoc of teamsSnap.docs) {
+        const playersSnap = await getDocs(collection(db, 'leagues', leagueId, 'teams', teamDoc.id, 'players'))
+        for (const playerDoc of playersSnap.docs) await deleteDoc(playerDoc.ref)
+        await deleteDoc(teamDoc.ref)
+      }
+      await deleteDoc(doc(db, 'leagues', leagueId))
+    } catch (err) {
+      console.error('Delete failed:', err)
+      showToast('Delete failed. Some data may remain — try again.')
+    } finally {
+      setDeleting(false)
     }
-    await deleteDoc(doc(db, 'leagues', leagueId))
   }
 
   return (
     <div className="page">
+
+      {/* Toast notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+          background: toast.type === 'error' ? '#dc2626' : '#16a34a',
+          color: '#fff', padding: '10px 18px', borderRadius: 10,
+          fontSize: '0.82rem', fontWeight: 600, zIndex: 9999,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.25)', maxWidth: 320, textAlign: 'center',
+          pointerEvents: 'none',
+        }}>
+          {toast.message}
+        </div>
+      )}
 
       {/* Header */}
       <div className="page-header">

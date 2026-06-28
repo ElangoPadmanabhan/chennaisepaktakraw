@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import Spinner from '../components/Spinner'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useToast } from '../hooks/useToast'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import {
@@ -69,6 +70,8 @@ export default function LeagueDetail() {
     )
   }, [leagueId])
 
+  const { toast, showToast } = useToast()
+
   const saveLeague = async (e) => {
     e.preventDefault()
     const errs = {}
@@ -76,15 +79,21 @@ export default function LeagueDetail() {
     if (!form.startDate)   errs.startDate = 'Required'
     if (Object.keys(errs).length) { setErrors(errs); return }
     setSaving(true)
-    await updateDoc(doc(db, 'leagues', leagueId), {
-      name: form.name.trim(), year: form.year,
-      startDate: form.startDate, endDate: form.endDate || null,
-      status: form.status, events: form.events,
-    })
-    setLeague(l => ({ ...l, ...form }))
-    setSaving(false)
-    setEditMode(false)
-    setErrors({})
+    try {
+      await updateDoc(doc(db, 'leagues', leagueId), {
+        name: form.name.trim(), year: form.year,
+        startDate: form.startDate, endDate: form.endDate || null,
+        status: form.status, events: form.events,
+      })
+      setLeague(l => ({ ...l, ...form }))
+      setEditMode(false)
+      setErrors({})
+    } catch (err) {
+      console.error('League save failed:', err)
+      showToast('Failed to save league details. Try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (!league) return <LoadingPage />
@@ -93,6 +102,20 @@ export default function LeagueDetail() {
 
   return (
     <div className="page">
+
+      {/* Toast notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+          background: toast.type === 'error' ? '#dc2626' : '#16a34a',
+          color: '#fff', padding: '10px 18px', borderRadius: 10,
+          fontSize: '0.82rem', fontWeight: 600, zIndex: 9999,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.25)', maxWidth: 320, textAlign: 'center',
+          pointerEvents: 'none',
+        }}>
+          {toast.message}
+        </div>
+      )}
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
@@ -292,6 +315,7 @@ function TeamCard({ team, leagueId, leagueEvents }) {
   const [logoFile, setLogoFile]   = useState(null)
   const [preview, setPreview]     = useState(team.logoUrl)
   const [saving, setSaving]       = useState(false)
+  const [saveError, setSaveError] = useState('')
   const [confirmDel, setConfirmDel] = useState(false)
   const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [players, setPlayers]     = useState([])
@@ -315,6 +339,7 @@ function TeamCard({ team, leagueId, leagueEvents }) {
   const handleSave = async () => {
     if (!name.trim()) return
     setSaving(true)
+    setSaveError('')
     try {
       let logoUrl = team.logoUrl
       if (logoFile) logoUrl = await uploadImage(`teams/${leagueId}/${team.id}/logo`, logoFile)
@@ -336,12 +361,21 @@ function TeamCard({ team, leagueId, leagueEvents }) {
       await batch.commit()
 
       setEditMode(false)
-    } finally { setSaving(false) }
+    } catch (err) {
+      console.error('Team save failed:', err)
+      setSaveError('Failed to save team. Try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleDelete = async () => {
-    if (team.logoUrl) await deleteObject(ref(storage, `teams/${leagueId}/${team.id}/logo`)).catch(() => {})
-    await deleteDoc(doc(db, 'leagues', leagueId, 'teams', team.id))
+    try {
+      if (team.logoUrl) await deleteObject(ref(storage, `teams/${leagueId}/${team.id}/logo`)).catch(() => {})
+      await deleteDoc(doc(db, 'leagues', leagueId, 'teams', team.id))
+    } catch (err) {
+      console.error('Team delete failed:', err)
+    }
   }
 
   const captain = players.find(p => p.role === 'Captain')
@@ -384,8 +418,9 @@ function TeamCard({ team, leagueId, leagueEvents }) {
             <input style={{ ...inputStyle(), flex: 1 }} value={name} onChange={e => setName(e.target.value)} placeholder="Team name" />
             <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
           </div>
+          {saveError && <p style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600, marginTop: 6 }}>{saveError}</p>}
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button className="btn btn-secondary" onClick={() => { setEditMode(false); setName(team.name); setPreview(team.logoUrl) }} style={{ flex: 1, height: 40 }}>Cancel</button>
+            <button className="btn btn-secondary" onClick={() => { setEditMode(false); setName(team.name); setPreview(team.logoUrl); setSaveError('') }} style={{ flex: 1, height: 40 }}>Cancel</button>
             <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ flex: 2, height: 40, fontSize: '0.85rem' }}>
               {saving ? <><Spinner /> Saving…</> : 'Save Team'}
             </button>
@@ -579,20 +614,32 @@ function PlayerRow({ player, leagueId, teamId, leagueEvents }) {
   const toggleEvent = (ev) =>
     setEvents(prev => prev.includes(ev) ? prev.filter(e => e !== ev) : [...prev, ev])
 
+  const [saveError, setSaveError] = useState('')
+
   const handleSave = async () => {
     if (!name.trim()) return
     setSaving(true)
+    setSaveError('')
     try {
       let photoUrl = player.photoUrl
       if (photoFile) photoUrl = await uploadImage(`players/${leagueId}/${teamId}/${player.id}/photo`, photoFile)
       await updateDoc(doc(db, 'leagues', leagueId, 'teams', teamId, 'players', player.id), { name: name.trim(), role, position, events, photoUrl })
       setEditMode(false)
-    } finally { setSaving(false) }
+    } catch (err) {
+      console.error('Player save failed:', err)
+      setSaveError('Failed to save player. Try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleDelete = async () => {
-    if (player.photoUrl) await deleteObject(ref(storage, `players/${leagueId}/${teamId}/${player.id}/photo`)).catch(() => {})
-    await deleteDoc(doc(db, 'leagues', leagueId, 'teams', teamId, 'players', player.id))
+    try {
+      if (player.photoUrl) await deleteObject(ref(storage, `players/${leagueId}/${teamId}/${player.id}/photo`)).catch(() => {})
+      await deleteDoc(doc(db, 'leagues', leagueId, 'teams', teamId, 'players', player.id))
+    } catch (err) {
+      console.error('Player delete failed:', err)
+    }
   }
 
   const cancelEdit = () => {
@@ -659,6 +706,7 @@ function PlayerRow({ player, leagueId, teamId, leagueEvents }) {
             </div>
           </>
         )}
+        {saveError && <p style={{ fontSize: '0.72rem', color: '#dc2626', fontWeight: 600, marginBottom: 6 }}>{saveError}</p>}
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-secondary" onClick={cancelEdit} style={{ flex:1, height:36, fontSize:'0.78rem' }}>Cancel</button>
           <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ flex:2, height:36, fontSize:'0.78rem' }}>{saving ? <><Spinner /> Saving…</> : 'Save'}</button>
@@ -859,6 +907,7 @@ function FixturesSection({ leagueId, league, teams }) {
   const [preview, setPreview]       = useState(null)   // unsaved preview
   const [confirmRegen, setConfirmRegen] = useState(false)
   const [saving, setSaving]         = useState(false)
+  const [saveError, setSaveError]   = useState('')
   const [collapsed, setCollapsed]   = useState(true)   // existing fixtures list
   const [rescheduleFixture, setRescheduleFixture] = useState(null) // { id, homeTeam, awayTeam, event, leg, date }
   const [rescheduleDate, setRescheduleDate]       = useState('')
@@ -922,9 +971,15 @@ function FixturesSection({ leagueId, league, teams }) {
           })
         })
       })
-      await batch.commit()
-      setPreview(null)
-      setCollapsed(false)
+      try {
+        await batch.commit()
+        setPreview(null)
+        setCollapsed(false)
+        setSaveError('')
+      } catch (err) {
+        console.error('Fixture batch save failed:', err)
+        setSaveError('Failed to save fixtures. Your fixtures may not have been updated — try again.')
+      }
     } finally { setSaving(false) }
   }
 
@@ -941,7 +996,11 @@ function FixturesSection({ leagueId, league, teams }) {
     try {
       await updateDoc(doc(db, 'leagues', leagueId, 'fixtures', rescheduleFixture.id), { date: rescheduleDate })
       setRescheduleFixture(null)
-    } finally { setRescheduleSaving(false) }
+    } catch (err) {
+      console.error('Reschedule failed:', err)
+    } finally {
+      setRescheduleSaving(false)
+    }
   }
 
   // Group existing fixtures by date
@@ -1102,11 +1161,12 @@ function FixturesSection({ leagueId, league, teams }) {
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-secondary" onClick={() => setPreview(null)} style={{ height: 36, padding: '0 12px', fontSize: '0.8rem' }}>Discard</button>
+              <button className="btn btn-secondary" onClick={() => { setPreview(null); setSaveError('') }} style={{ height: 36, padding: '0 12px', fontSize: '0.8rem' }}>Discard</button>
               <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ height: 36, padding: '0 14px', fontSize: '0.8rem' }}>
                 {saving ? <><Spinner /> Saving…</> : 'Confirm & Save'}
               </button>
             </div>
+            {saveError && <p style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600, marginTop: 8 }}>{saveError}</p>}
           </div>
           <div style={{ maxHeight: 460, overflowY: 'auto' }}>
             {preview.map(sunday => (
@@ -1359,11 +1419,14 @@ function PowSheet({ leagueId, date, existingPow, onClose }) {
 
   const close = () => { setVisible(false); setTimeout(onClose, 300) }
 
+  const [powError, setPowError] = useState('')
+
   const handleSave = async () => {
     const team   = teams.find(t => t.id === selectedTeamId)
     const player = players.find(p => p.id === selectedPlayerId)
     if (!team || !player) return
     setSaving(true)
+    setPowError('')
     try {
       await setDoc(doc(db, 'leagues', leagueId, 'pow', date), {
         date,
@@ -1378,13 +1441,23 @@ function PowSheet({ leagueId, date, existingPow, onClose }) {
         updatedAt:  serverTimestamp(),
       })
       close()
-    } finally { setSaving(false) }
+    } catch (err) {
+      console.error('POW save failed:', err)
+      setPowError('Failed to save. Try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleClear = async () => {
     if (!window.confirm('Remove Player of the Week for this date?')) return
-    await deleteDoc(doc(db, 'leagues', leagueId, 'pow', date))
-    close()
+    try {
+      await deleteDoc(doc(db, 'leagues', leagueId, 'pow', date))
+      close()
+    } catch (err) {
+      console.error('POW clear failed:', err)
+      setPowError('Failed to remove. Try again.')
+    }
   }
 
   return (
@@ -1487,6 +1560,7 @@ function PowSheet({ leagueId, date, existingPow, onClose }) {
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
+        {powError && <p style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600, marginTop: 8, textAlign: 'center' }}>{powError}</p>}
       </div>
     </>
   )
